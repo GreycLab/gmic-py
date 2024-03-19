@@ -344,7 +344,7 @@ def test_run_gmic_instance_run_simple_demo_png_output_and_input(gmic_instance_ru
 
 @pytest.mark.parametrize(**gmic_instance_types)
 def test_run_gmic_instance_run_simple_3pixels_bmp_output(gmic_instance_run):
-    """ Ensure that the native bmp file output works"""
+    """Ensure that the native bmp file output works"""
 
     bmp_filename = "a.bmp"
     gmic_instance_run('input "(0,128,255)" output ' + bmp_filename)

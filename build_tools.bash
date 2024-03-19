@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # TL;DR ? Just run bash build_tools.bash [--help]
 
 BLACK_FORMATTER_VERSION=20.8b1
@@ -48,8 +49,8 @@ function __get_py_package_version () {
 function 00_all_steps () {
     # See related but defunct Dockerfile at https://github.com/myselfhimself/gmic-py/blob/fc12cb74f4b02fbfd83e9e9fba44ba7a4cee0d93/Dockerfile
     21_check_c_style && 23_check_python_style && 1_clean_and_regrab_gmic_src && 2_compile && 3_test_compiled_so && 4_build_wheel && 5_test_wheel && 6_build_sdist && 7_test_sdist
-    echo "This is the final file tree:"
-    find .
+#    echo "This is the final file tree:"
+#    find .
 }
 
 function 01_reload_gmic_env () {
@@ -94,14 +95,14 @@ function 11_send_to_pypi () {
 
     # Upload sdist source tar.gz archive if found
     if [ -d "dist/" ]; then
-      for a in `ls dist/*.tar.gz`; do
+      for a in dist/*.tar.gz; do
         $TWINE upload $a $TWINE_OPTIONS
       done
     fi
 
     # Upload binary python wheels if found
     if [ -d "wheelhouse/" ]; then
-      for a in `ls wheelhouse/* | grep -E 'manylinux|macosx'`; do # Keep /* wildcard for proper relative paths!!
+      for a in $(echo wheelhouse/* | grep -E 'manylinux|macosx'); do # Keep /* wildcard for proper relative paths!!
         $TWINE upload $a $TWINE_OPTIONS
       done
     fi

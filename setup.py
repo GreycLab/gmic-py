@@ -1,16 +1,14 @@
 """A setuptools based setup module for the Gmic Python bindings binary module.
 """
 
-from os import path, listdir, environ
 import sys
-import platform
+from os import path
 
-from setuptools import setup, Extension, find_packages
 import pkgconfig
+from setuptools import setup, Extension
 
 here = path.abspath(path.dirname(__file__))
 gmic_src_path = path.abspath("src/gmic/src")
-
 
 # List of non-standard '-l*' compiler parameters
 extra_link_args = []
@@ -77,11 +75,6 @@ if sys.platform == "darwin":
 include_dirs = packages["include_dirs"] + [here, gmic_src_path]
 if sys.platform == "darwin":
     include_dirs += ["/usr/local/opt/llvm@6/include"]
-# Debugging is now set through --global-option --debug and more.
-# debugging_args = [
-#     "-O0",
-#     "-g",
-# ]  # Uncomment this for faster compilation with debug symbols and no optimization
 
 debug_enabled = "--debug" in sys.argv
 
@@ -132,8 +125,8 @@ with open(path.join(here, "README.md"), encoding="utf-8") as f:
 with open(path.join(".", "VERSION")) as version_file:
     version = version_file.read().strip()
     if "pre" in version:
-        version_prerelease = version.split("pre",1)[1]
-        define_macros += [("gmic_prerelease","\""+version_prerelease+"\"")]
+        version_prerelease = version.split("pre", 1)[1]
+        define_macros += [("gmic_prerelease", '"' + version_prerelease + '"')]
 
 setup(
     name="gmic",

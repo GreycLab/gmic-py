@@ -33,13 +33,13 @@ Check out the [`gmic-py` documentation website (readthedocs)](https://gmic-py.re
 
 `gmic-py`'s slowly growing community gravitates around:
 
-- this [Github's project Issue tracker](https://github.com/myselfhimself/gmic-py/issues),
+- this [GitHub's project Issue tracker](https://github.com/myselfhimself/gmic-py/issues),
 - [Twitter (#gmicpy)](https://twitter.com/search?q=%23gmicpy&src=typed_query)
 - [the pixls.us `gmic-py` forum thread](https://discuss.pixls.us/t/developing-and-fiddling-with-the-gmic-python-binding/20406).
 
 ![gmic-py 2.9.2 release plan](docs/_static/images/292_plan.png)
 
-[gmic-blender](https://github.com/myselfhimself/gmic-blender) is a Blender3d add-on bundling `gmic-py` and allowing you use a new `gmic` module from there without installing anything more.
+[gmic-blender](https://github.com/myselfhimself/gmic-blender) is a Blender3d add-on bundling `gmic-py` and allowing you to use a new `gmic` module from there without installing anything more.
 
 ## Quickstart
 First install the G'MIC Python module in your (virtual) environment.
@@ -63,7 +63,7 @@ Tutorials on various topics are available in the [documentation](https://gmic-py
 Full documentation is being written at [https://gmic-py.readthedocs.io/](https://gmic-py.readthedocs.io/).
 
 ## Supported platforms
-`gmic-py` works for Linux and Mac OS x 64bits architecture x Python >= 3.6. Windows support is planned for Q4 2020.
+`gmic-py` works for Linux and Mac OS X 64bits architecture x Python >= 3.6. Windows support is planned for Q4 2020.
 
 In case your environment is a type of Unix, but compiling from source is needed, note that the `pip` installer will download `gmic-py`'s source and most possibly compile it very well.
 See the `CONTRIBUTING.md` file and the [documentation](https://gmic-py.readthedocs.io/) for tips on building `gmic-py` for your own OS.
@@ -118,7 +118,7 @@ Filtering GIF images, ontage'd into an A4 sheet paper.
 Details on the [related Jupyter/IPython/* support documentation page](https://gmic-py.readthedocs.io/en/latest/jupyter.html).
 
 ### Using your camera with G'MIC's optional OpenCV linking (advanced)
-If your machine has `libopencv` installed and you [build `gmic-py` from source](https://gmic-py.readthedocs.io/en/latest/compiling.html#tl-dr-building-gmic-py-on-linux) (ie. `python setup.py build`), G'MIC OpenCV commands will be enabled.
+If your machine has `libopencv` installed and you [build `gmic-py` from source](https://gmic-py.readthedocs.io/en/latest/compiling.html#tl-dr-building-gmic-py-on-linux) (i.e. `python setup.py build`), G'MIC OpenCV commands will be enabled.
 
 [Example G'MIC OpenCV script](examples/opencv-camera/gmic-py-opencv-camera.py)
 

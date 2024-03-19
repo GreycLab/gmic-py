@@ -7,3 +7,4 @@ gmic
 docs/_build/
 wheelhouse/*
 *.egg-info*
+venv
