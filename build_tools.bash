@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TL;DR ? Just run bash build_tools.bash [--help]
 
-BLACK_FORMATTER_VERSION=20.8b1
+BLACK_FORMATTER_VERSION=22.3
 PYTHON3=${PYTHON3:-python3}
 PIP3=${PIP3:-pip3}
 PYTHON_VERSION=$($PYTHON3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
