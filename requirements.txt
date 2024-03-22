@@ -1,6 +1,5 @@
 # Requirements for a local developer environment and for CI building (top and wheel-level)
 wheel
-pkgconfig
 #scikit-image
 numpy #==1.16.1 # fixes https://github.com/scikit-image/scikit-image/issues/3655
 Pillow

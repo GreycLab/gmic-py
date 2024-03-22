@@ -1,10 +1,8 @@
 .idea/
-src/
 out.json
 build/
-dist/
-gmic
 docs/_build/
-wheelhouse/*
-*.egg-info*
 venv
+/dist
+__pycache__
+py-build-cmake.local.toml

@@ -1,0 +1,61 @@
+[project]
+name = "gmic"
+version = "3.3.6"
+description = "Python bindings for the G'MIC C++ image processing library"
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+    { "name" = "David Tschumperlé", "email" = "David.Tschumperle@ensicaen.fr" },
+    { "name" = "Sébastien Fourey", "email" = "Sebastien.Fourey@ensicaen.fr" },
+    { "name" = "Jonathan-David Schröder", "email" = "jonathan.schroder@gmail.com" },
+    { "name" = "Lauréline Nevin", "email" = "laureline.nevin@unicaen.fr" }
+]
+keywords = ["gmic", "graphics", "image", "filter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Other Audience",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Artistic Software",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Software Development",
+    "Topic :: Multimedia :: Graphics",
+    "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+jupyter = ["wurlitzer"]
+
+[project.urls]
+"Bug Reports" = "https://github.com/GreycLab/gmic-py/issues"
+"Funding" = "https://libreart.info/en/projects/gmic"
+"Say Thanks!" = "https://twitter.com/gmic_eu"
+"Source" = "https://github.com/GreycLab/gmic-py"
+"Documentation" = "https://gmic-py.readthedocs.io"
+
+
+[build-system]
+requires = ["py-build-cmake~=0.1.8"]
+build-backend = "py_build_cmake.build"
+
+[tool.py-build-cmake.module]
+directory = "pysrc"
+
+[tool.py-build-cmake.sdist]
+include = ["CMakeLists.txt", "src", "lib"]
+exclude = ["src/gmic/html", "src/gmic/.git*"]
+
+[tool.py-build-cmake.cmake]
+minimum_version = "3.17"
+build_type = "Release"
+build_path = "build"
+install_components = ["python_modules"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["test"]
