@@ -12,6 +12,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 Python3_add_library(gmic-py MODULE "src/gmicpy.h" "src/gmicpy.cpp" WITH_SOABI)
 set_target_properties(gmic-py PROPERTIES OUTPUT_NAME "_gmic")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
+configure_file(pysrc/gmic/__init__.py ${CMAKE_CURRENT_BINARY_DIR} COPYONLY)
 
 option(GMIC_PY_NUMPY "Build with numpy support" ON)
 if (GMIC_PY_NUMPY)
