@@ -19,20 +19,18 @@ list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
 # Add the module to compile
-nanobind_add_module(gmic-py "src/gmicpy.hpp" "src/gmicpy.cpp")
-#Python_add_library(gmic-py MODULE "src/gmicpy.hpp" "src/gmicpy.cpp" WITH_SOABI)
+nanobind_add_module(gmic-py "src/gmicpy.cpp")
 set_target_properties(gmic-py PROPERTIES
-        OUTPUT_NAME "_gmic"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gmic")
+        OUTPUT_NAME "_gmic")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
-configure_file(pysrc/gmic/__init__.py "${CMAKE_CURRENT_BINARY_DIR}/gmic/__init__.py" COPYONLY)
+
+add_custom_command(TARGET gmic-py POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E create_symlink
+        "$<TARGET_FILE:gmic-py>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/pysrc/gmic/$<TARGET_FILE_NAME:gmic-py>"
+        COMMENT "Copying .so file to pysrc/")
 
 get_target_property(PROJECT_CXX_STANDARD gmic-py CXX_STANDARD)
-
-option(GMIC_PY_NUMPY "Build with numpy support" ON)
-if (GMIC_PY_NUMPY)
-    target_compile_options(gmic-py PUBLIC -Dgmic_py_numpy)
-endif ()
 
 # Install the module
 install(TARGETS gmic-py
@@ -44,4 +42,4 @@ add_test(NAME gmic-py-tests
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
 )
 set_tests_properties(gmic-py-tests
-        PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}")
+        PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/pysrc")
