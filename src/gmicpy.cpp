@@ -54,21 +54,37 @@ class gmic_list_py;
 template <typename T>
 class template_args {
    public:
-    template <typename A>
-    static inline A get_tpl_arg(A a)
-    {
-        return a;
-    };
-
-    static inline CImg<T> &get_tpl_arg(gmic_image_py<T> &img)
+    [[maybe_unused]] static inline CImg<T> &substitute(gmic_image_py<T> &img)
     {
         return img.get_image();
     }
 
-    static inline const char *get_tpl_arg(const string &str)
+    [[maybe_unused]] static inline CImgList<T> &substitute(
+        gmic_list_py<T> &img)
+    {
+        return img.get_list();
+    }
+
+    static inline const char *substitute(const string &str)
     {
         return str.c_str();
     }
+
+    template <typename A>
+    static inline auto get_tpl_arg(A &&a) -> decltype(substitute(declval<A>()))
+    {
+        return substitute(std::forward<A>(a));
+    }
+
+    template <typename... A>  // Variadic template = lower priority
+    static inline auto get_tpl_arg(A &&...a) -> decltype(declval<A...>())
+    {
+        return std::forward<A...>(a...);
+    }
+
+    template <typename... Args>
+    using can_assign = is_lvalue_reference<decltype(CImg<T>{}.assign(
+        get_tpl_arg(std::forward<Args>(declval<Args>()))...))>;
 
     template <typename... Args>
     static const char *assign_signature(char *buf, size_t N, const char *doc,
@@ -77,7 +93,7 @@ class template_args {
         char *max = buf + N;
         buf += snprintf(buf, N, "%s\n\nBinds %s(", doc, func);
         vector<const char *> argtypes{
-            typeid(decltype(template_args::get_tpl_arg(declval<Args>)))
+            typeid(decltype(template_args::get_tpl_arg(declval<Args>())))
                 .name()...};
         bool first = true;
         for (auto &t : argtypes) {
@@ -95,9 +111,30 @@ class template_args {
     }
 };
 
+template <typename Sh, typename St>
+bool is_c_contig(unsigned short ndim, Sh *shape, St *strides)
+{
+    decltype((*shape) * (*strides)) acc = 1;
+    for (size_t i = ndim; i >= 0; --i) {
+        if (strides[i] != acc)
+            return false;
+        acc *= shape[i];
+    }
+    return true;
+}
+
+template <typename... P>
+bool is_c_contig(nb::ndarray<P...> arr)
+{
+    return is_c_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
+}
+
 template <typename T = gmic_pixel_type>
 class gmic_image_py {
-    typedef nb::ndarray<T, nb::ndim<4>, nb::device::cpu> NDArray;
+    template <typename... P>
+    using TNDArray = nb::ndarray<T, nb::device::cpu, P...>;
+    template <typename... P>
+    using T4DArray = TNDArray<nb::ndim<4>, P...>;
     typedef template_args<T> Tpl;
     CImg<T> image;
     static constexpr auto DIMS = "SDHW";
@@ -170,7 +207,7 @@ class gmic_image_py {
      * coordinates, but reordered C-style
      */
     template <typename... P>
-    nb::ndarray<T, P...> copy_ndarray(nb::ndarray<T, P...> array)
+    TNDArray<P...> copy_ndarray(TNDArray<P...> array)
     {
         T *src = array.data(), *dest = new T[array.size()];
         nb::capsule owner(dest, [](void *p) noexcept { delete[] (float *)p; });
@@ -200,39 +237,60 @@ class gmic_image_py {
             }
         }
 
-        return nb::ndarray<T, P...>(dest, array.ndim(), shape, owner);
+        return TNDArray<P...>(dest, array.ndim(), shape, owner);
     }
 
    public:
     constexpr static auto CLASSNAME = "GmicImage";
     gmic_image_py() : image() {}
-    explicit gmic_image_py(CImg<T> &img) { img.move_to(image); }
-    explicit gmic_image_py(CImg<T> &&img) { img.move_to(image); }
 
-    template <typename... P>
-    explicit gmic_image_py(nb::ndarray<T, nb::ndim<4>, P...> array)
-        : image(array.data(), array.shape(3), array.shape(2), array.shape(1),
-                array.shape(0), false)
+    gmic_image_py(const gmic_image_py &other) : image(other.image) {}
+
+    gmic_image_py(gmic_image_py &&other) noexcept
+        : image(std::move(other.image))
     {
     }
 
     template <typename... Args>
-    explicit gmic_image_py(Args... args) : image(Tpl::get_tpl_arg(args)...)
+    explicit gmic_image_py(Args &&...args)
     {
+        assign(std::forward<Args>(args)...);
     }
 
     ~gmic_image_py() = default;
 
     template <typename... Args>
-    auto assign(Args... args) -> decltype(gmic_image_py(
-        CImg<T>{}.assign(Tpl::get_tpl_arg(declval<Args>())...))) &
+    auto assign(Args &&...args) ->
+        typename enable_if<Tpl::template can_assign<Args...>::value,
+                           gmic_image_py &>::type &
     {
-        image.assign(Tpl::get_tpl_arg(args)...);
+        image.assign(
+            Tpl::template get_tpl_arg<Args>(std::forward<Args>(args))...);
+        return *this;
+    }
+
+    template <class A>
+    auto assign(A arr) -> typename enable_if<is_same<A, T4DArray<>>::value,
+                                             gmic_image_py &>::type
+    {
+        image.assign(arr.shape(0), arr.shape(1), arr.shape(2), arr.shape(3));
+        if (is_c_contig(arr)) {
+            std::copy_n(arr.data(), arr.size(), image.data());
+        }
+        else {
+            auto v = arr.view();
+            for (size_t c = 0; c < image._spectrum; c++)
+                for (size_t d = 0; d < image._depth; d++)
+                    for (size_t y = 0; y < image._depth; y++)
+                        for (size_t x = 0; x < image._depth; x++)
+                            image(x, y, d, c) = v(x, y, d, c);
+        }
         return *this;
     }
 
     static constexpr auto TO_NDARRAY_DOC =
-        "Returns a ndarray wrapper of the underlying data of the image in its "
+        "Returns a ndarray wrapper of the underlying data of the image in "
+        "its "
         "native (SDHW) order";
     nb::ndarray<T, nb::numpy, nb::device::cpu, nb::ndim<4>> to_native_ndarray()
     {
@@ -243,8 +301,7 @@ class gmic_image_py {
     }
 
     template <typename... P>
-    nb::ndarray<T, P...> to_ndarray(const string &dims_str, int64_t x,
-                                    int64_t y, int64_t z, int64_t c, bool copy)
+    TNDArray<P...> to_ndarray(const string &dims_str, bool copy)
     {
         const auto self = nb::find(this);
         auto dims = parse_dims(dims_str);
@@ -255,11 +312,11 @@ class gmic_image_py {
         auto shape = reorder_to_spec(dims, nshape);
         auto strides = reorder_to_spec(dims, nstrides);
 
-        auto arr = nb::ndarray<T, P...>(image._data, ndims, shape.data(), self,
-                                        strides.data());
+        auto arr = TNDArray<P...>(image._data, ndims, shape.data(), self,
+                                  strides.data());
 
         if (copy)
-            return copy_ndarray(arr);
+            return copy_ndarray<P...>(arr);
         else
             return arr;
     }
@@ -335,19 +392,24 @@ class gmic_image_py {
 
         // Bindings for CImg constructors and assign()'s
         IMAGE_ASSIGN("Construct empty image", ARGS());
+        IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &), "other"_a);
+        IMAGE_ASSIGN("Advanced copy constructor", ARGS(gmic_image_py &, bool),
+                     "other"_a, "is_shared"_a);
         IMAGE_ASSIGN(
             "Construct image with specified size",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int),
-            "width"_a, "height"_a, "depth"_a, "channels"_a);
+            "width"_a, "height"_a, "depth"_a = 1, "channels"_a = 1);
         IMAGE_ASSIGN(
-            "Construct image with specified size and initialize pixel values",
+            "Construct image with specified size and initialize pixel "
+            "values",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int, T &),
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value"_a);
         IMAGE_ASSIGN(
-            "Construct image with specified size and initialize pixel values "
+            "Construct image with specified size and initialize pixel "
+            "values "
             "from a value string",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int,
-                 const char *, bool),
+                 string &, bool),
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value_string"_a,
             "repeat"_a);
         IMAGE_ASSIGN("Construct image from reading an image file",
@@ -355,7 +417,16 @@ class gmic_image_py {
         IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &));
         IMAGE_ASSIGN(
             "Construct image with dimensions borrowed from another image",
-            ARGS(gmic_image_py &, string), "other"_a, "dimensions"_a);
+            ARGS(gmic_image_py &, string &), "other"_a, "dimensions"_a);
+        IMAGE_ASSIGN(
+            "Construct image with dimensions borrowed from another image and "
+            "initialize pixel values",
+            ARGS(gmic_image_py &, string &, T &), "other"_a, "dimensions"_a,
+            "value"_a);
+
+        // gmic-py specific bindings
+        IMAGE_ASSIGN("Construct an image from an ndarray", ARGS(T4DArray<>),
+                     "array"_a);
     }
 #undef IMAGE_ASSIGN
 };
