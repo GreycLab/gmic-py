@@ -51,40 +51,160 @@ class gmic_image_py;
 template <typename T>
 class gmic_list_py;
 
-template <typename T>
-class template_args {
+/**
+ * Class that manages the translation of values between the python binding and
+ * the native GMIC/CImg library
+ */
+class Trans {
    public:
-    [[maybe_unused]] static inline CImg<T> &substitute(gmic_image_py<T> &img)
+    using registry = std::map<void *, pair<void *, const type_info *>>;
+
+    template <typename A>
+    [[maybe_unused]] static inline void *get_void_p(A *val)
+    {
+        return (void *)val;
+    }
+
+    template <typename A>
+    static inline void *get_void_p(A &val)
+    {
+        return (void *)&val;
+    }
+
+    template <typename A>
+    [[maybe_unused]] static inline auto substitute(A &&img) ->
+        typename remove_reference_t<A>::CImgT &
     {
         return img.get_image();
     }
 
-    [[maybe_unused]] static inline CImgList<T> &substitute(
-        gmic_list_py<T> &img)
+    template <typename A>
+    [[maybe_unused]] static inline auto substitute(A &&list) ->
+        typename remove_reference_t<A>::CImgListT &
     {
-        return img.get_list();
+        return list.get_list();
     }
 
-    static inline const char *substitute(const string &str)
+    template <
+        typename A,
+        enable_if_t<is_same_v<remove_const_t<remove_reference_t<A>>, string>,
+                    bool> = true>
+    static inline const char *substitute(A &&str)
     {
         return str.c_str();
     }
 
-    template <typename A>
-    static inline auto get_tpl_arg(A &&a) -> decltype(substitute(declval<A>()))
+    template <
+        typename A, typename Ar = remove_reference_t<A>,
+        enable_if_t<is_same_v<Ar, CImg<typename Ar::value_type>>, bool> = true>
+    [[maybe_unused]] static inline auto unsubstitute(A &&img)
     {
-        return substitute(std::forward<A>(a));
+        return gmic_image_py<typename Ar::value_type>(img);
     }
 
-    template <typename... A>  // Variadic template = lower priority
-    static inline auto get_tpl_arg(A &&...a) -> decltype(declval<A...>())
+    template <typename A, typename Ar = remove_reference_t<A>,
+              enable_if_t<is_same_v<Ar, CImgList<typename Ar::value_type>>,
+                          bool> = true>
+    [[maybe_unused]] static inline auto unsubstitute(A &&list)
+    {
+        return gmic_list_py<typename Ar::value_type>(list);
+    }
+
+    template <typename A, class = void>
+    struct is_registrable : false_type {};
+
+    template <typename A>
+    struct is_registrable<A, decltype(substitute<A>(declval<A>()))>
+        : integral_constant<
+              bool, (is_lvalue_reference_v<A> || is_pointer_v<A>)&&(
+                        is_lvalue_reference_v<decltype(substitute<A>(
+                            declval<A>()))> ||
+                        is_pointer_v<decltype(substitute<A>(declval<A>()))>)> {
+    };
+
+    template <typename A,
+              typename Return = decltype(substitute<A>(declval<A>()))>
+    static inline auto translate(A &&a, registry * = nullptr)
+        -> enable_if_t<!is_registrable<A>::value, Return>
+    {
+        static_assert(is_same_v<remove_reference_t<Return>,
+                                remove_reference_t<decltype(translate<Return>(
+                                    declval<Return>()))>>,
+                      "Translated value is not translate-stable");
+        return substitute<A>(std::forward<A>(a));
+    }
+
+    template <typename A,
+              typename Return = decltype(substitute<A>(declval<A>()))>
+    static inline auto translate(A &&a, registry *reg = nullptr)
+        -> enable_if_t<is_registrable<A>::value, Return>
+    {
+        static_assert(
+            is_same_v<decltype(substitute<A>(declval<A>())),
+                      decltype(translate<A>(substitute<A>(declval<A>())))>,
+            "Translated value is not translate-stable");
+        auto b = substitute<A>(std::forward<A>(a));
+        if (reg && (void *)&a != (void *)&b) {
+            reg->emplace(get_void_p(b), make_pair(get_void_p(a), &typeid(A)));
+        }
+        return b;
+    }
+
+    template <typename... A>
+    static inline decltype(declval<A...>()) translate(A &&...a,
+                                                      registry * = nullptr)
     {
         return std::forward<A...>(a...);
     }
 
-    template <typename... Args>
+    //    template <typename... A>
+    //    static inline decltype(declval<A...>()) translate(A... a,
+    //                                                      registry * =
+    //                                                      nullptr)
+    //    {
+    //        return std::forward<A...>(a...);
+    //    }
+
+    template <typename A>
+    static inline auto untranslate(A &&a, registry *reg = nullptr)
+        -> decltype(unsubstitute<A>(declval<A>()))
+    {
+        static_assert(
+            is_same_v<decltype(unsubstitute<A>(declval<A>())),
+                      decltype(untranslate<A>(unsubstitute<A>(declval<A>())))>,
+            "Untranslated value is not untranslate-stable");
+        if (reg) {
+            auto it = reg->find(&a);
+            if (it != reg->end()) {
+                auto [b, t1] = it->second;
+                const type_info &t2 =
+                    typeid(decltype(unsubstitute<A>(declval<A>())));
+                if (*t1 != t2) {
+                    throw runtime_error(
+                        string("Mismatched un/translated typeid. In: ") +
+                        t1->name() + ", Out: " + t2.name());
+                }
+                return *static_cast<decltype(unsubstitute<A>(declval<A>())) *>(
+                    b);
+            }
+        }
+        return unsubstitute<A>(a);
+    }
+
+    template <typename... A>  // Variadic template = lower priority
+    static inline auto untranslate(A &&...a, registry * = nullptr)
+        -> decltype(declval<A...>())
+    {
+        return std::forward<A...>(a...);
+    }
+
+    template <typename T, typename... Args>
     using can_assign = is_lvalue_reference<decltype(CImg<T>{}.assign(
-        get_tpl_arg(std::forward<Args>(declval<Args>()))...))>;
+        translate<Args>(declval<Args>())...))>;
+    template <typename A>
+    using translated = decltype(translate<A>(declval<A>()));
+    template <typename A>
+    using untranslated = decltype(untranslate<A>(declval<A>()));
 
     template <typename... Args>
     static const char *assign_signature(char *buf, size_t N, const char *doc,
@@ -93,7 +213,7 @@ class template_args {
         char *max = buf + N;
         buf += snprintf(buf, N, "%s\n\nBinds %s(", doc, func);
         vector<const char *> argtypes{
-            typeid(decltype(template_args::get_tpl_arg(declval<Args>())))
+            typeid(decltype(Trans::translate<Args>(declval<Args>())))
                 .name()...};
         bool first = true;
         for (auto &t : argtypes) {
@@ -131,12 +251,16 @@ bool is_c_contig(nb::ndarray<P...> arr)
 
 template <typename T = gmic_pixel_type>
 class gmic_image_py {
+   public:
+    typedef CImg<T> CImgT;
+
+   private:
     template <typename... P>
     using TNDArray = nb::ndarray<T, nb::device::cpu, P...>;
     template <typename... P>
     using T4DArray = TNDArray<nb::ndim<4>, P...>;
-    typedef template_args<T> Tpl;
-    CImg<T> image;
+
+    CImgT image;
     static constexpr auto DIMS = "SDHW";
 
     /**
@@ -260,18 +384,17 @@ class gmic_image_py {
     ~gmic_image_py() = default;
 
     template <typename... Args>
-    auto assign(Args &&...args) ->
-        typename enable_if<Tpl::template can_assign<Args...>::value,
-                           gmic_image_py &>::type &
+    auto assign(Args &&...args)
+        -> enable_if_t<Trans::can_assign<T, Args...>::value, gmic_image_py &>
     {
         image.assign(
-            Tpl::template get_tpl_arg<Args>(std::forward<Args>(args))...);
+            Trans::template translate<Args>(std::forward<Args>(args))...);
         return *this;
     }
 
     template <class A>
-    auto assign(A arr) -> typename enable_if<is_same<A, T4DArray<>>::value,
-                                             gmic_image_py &>::type
+    auto assign(A arr)
+        -> enable_if_t<is_same<A, T4DArray<>>::value, gmic_image_py &>
     {
         image.assign(arr.shape(0), arr.shape(1), arr.shape(2), arr.shape(3));
         if (is_c_contig(arr)) {
@@ -279,10 +402,10 @@ class gmic_image_py {
         }
         else {
             auto v = arr.view();
-            for (size_t c = 0; c < image._spectrum; c++)
-                for (size_t d = 0; d < image._depth; d++)
-                    for (size_t y = 0; y < image._depth; y++)
-                        for (size_t x = 0; x < image._depth; x++)
+            for (size_t c = 0; c < image.spectrum(); c++)
+                for (size_t d = 0; d < image.depth(); d++)
+                    for (size_t y = 0; y < image.depth(); y++)
+                        for (size_t x = 0; x < image.depth(); x++)
                             image(x, y, d, c) = v(x, y, d, c);
         }
         return *this;
@@ -295,7 +418,7 @@ class gmic_image_py {
     nb::ndarray<T, nb::numpy, nb::device::cpu, nb::ndim<4>> to_native_ndarray()
     {
         return nb::ndarray<T, nb::numpy, nb::device::cpu, nb::ndim<4>>(
-            image._data,
+            image.data(),
             {image._spectrum, image._depth, image._height, image._width},
             nb::handle());
     }
@@ -312,7 +435,7 @@ class gmic_image_py {
         auto shape = reorder_to_spec(dims, nshape);
         auto strides = reorder_to_spec(dims, nstrides);
 
-        auto arr = TNDArray<P...>(image._data, ndims, shape.data(), self,
+        auto arr = TNDArray<P...>(image.data(), ndims, shape.data(), self,
                                   strides.data());
 
         if (copy)
@@ -321,10 +444,19 @@ class gmic_image_py {
             return arr;
     }
 
-    unsigned int width() { return image._width; }
-    unsigned int height() { return image._height; }
-    unsigned int depth() { return image._depth; }
-    unsigned int spectrum() { return image._spectrum; }
+    unsigned int width() { return image.width(); }
+    unsigned int height() { return image.height(); }
+    unsigned int depth() { return image.depth(); }
+    unsigned int spectrum() { return image.spectrum(); }
+
+    template <typename Return, typename... Args>
+    auto exec(Return (CImgT::*func)(Trans::translated<Args>...),
+              Args &&...args) -> Trans::untranslated<Return>
+    {
+        Trans::registry reg;
+        return Trans::untranslate(
+            image.*func(Trans::translate<Args>(args, reg)...), reg);
+    }
 
     template <typename I = size_t>
     vector<I> strides()
@@ -357,13 +489,13 @@ class gmic_image_py {
         stringstream out;
         out << "<" << nb::type_name(nb::type<gmic_image_py>()).c_str()
             << " at " << static_cast<const void *>(this)
-            << ", data at: " << static_cast<const void *>(image._data)
-            << ", w×h×s×d=" << image._width << "×" << image._height << "×"
-            << image._spectrum << "×" << image._depth << ">";
+            << ", data at: " << static_cast<const void *>(image.data())
+            << ", w×h×s×d=" << image.width() << "×" << image.height() << "×"
+            << image.spectrum() << "×" << image.depth() << ">";
         return out.str();
     }
 
-    CImg<T> &get_image() { return image; }
+    CImgT &get_image() { return image; }
 
     static void bind(nb::module_ &m)
     {
@@ -380,18 +512,17 @@ class gmic_image_py {
                 .def("__repr__", &gmic_image_py::str);
         char doc_buf[1024];
 #define ARGS(...) __VA_ARGS__
-#define IMAGE_ASSIGN(doc, TYPES, ...)                                       \
-    cls.def(nb::init<TYPES>(),                                              \
-            Tpl::template assign_signature<TYPES>(doc_buf, size(doc_buf),   \
-                                                  doc, "CImg<T>"),          \
-            ##__VA_ARGS__)                                                  \
-        .def("assign", &gmic_image_py::assign<TYPES>,                       \
-             Tpl::template assign_signature<TYPES>(doc_buf, size(doc_buf),  \
-                                                   doc, "CImg<T>::assign"), \
+#define IMAGE_ASSIGN(doc, TYPES, ...)                                    \
+    cls.def(nb::init<TYPES>(),                                           \
+            Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc,  \
+                                           "CImg<T>"),                   \
+            ##__VA_ARGS__)                                               \
+        .def("assign", &gmic_image_py::assign<TYPES>,                    \
+             Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc, \
+                                            "CImg<T>::assign"),          \
              nb::rv_policy::none, ##__VA_ARGS__)
 
         // Bindings for CImg constructors and assign()'s
-        IMAGE_ASSIGN("Construct empty image", ARGS());
         IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &), "other"_a);
         IMAGE_ASSIGN("Advanced copy constructor", ARGS(gmic_image_py &, bool),
                      "other"_a, "is_shared"_a);
@@ -433,8 +564,12 @@ class gmic_image_py {
 
 template <typename T = gmic_pixel_type>
 class gmic_list_py {
+   public:
+    typedef CImgList<T> CImgListT;
+
+   private:
     constexpr static auto CLASSNAME = "GmicList";
-    CImgList<T> list;
+    CImgListT list;
     vector<gmic_image_py<T> *> data_py;
 
    public:
@@ -496,7 +631,7 @@ class gmic_list_py {
 
         auto *img = data_py[i];
         if (img == nullptr) {
-            img = data_py[i] = new gmic_image_py<T>(list._data[i]);
+            img = data_py[i] = new gmic_image_py<T>(list(i), true);
         }
         return *img;
     }
