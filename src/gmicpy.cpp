@@ -72,15 +72,15 @@ class Trans {
     }
 
     template <typename A>
-    [[maybe_unused]] static inline auto substitute(A &&img) ->
-        typename remove_reference_t<A>::CImgT &
+    [[maybe_unused]] static inline auto substitute(A &&img)
+        -> decltype(img.get_image())
     {
         return img.get_image();
     }
 
     template <typename A>
-    [[maybe_unused]] static inline auto substitute(A &&list) ->
-        typename remove_reference_t<A>::CImgListT &
+    [[maybe_unused]] static inline auto substitute(A &&list)
+        -> decltype(list.get_list())
     {
         return list.get_list();
     }
@@ -110,44 +110,25 @@ class Trans {
         return gmic_list_py<typename Ar::value_type>(list);
     }
 
-    template <typename A, class = void>
-    struct is_registrable : false_type {};
+    template <typename... A>
+    struct is_registrable
+        : integral_constant<bool, ((is_lvalue_reference_v<A> ||
+                                    is_pointer_v<A>)&&...)> {};
 
-    template <typename A>
-    struct is_registrable<A, decltype(substitute<A>(declval<A>()))>
-        : integral_constant<
-              bool, (is_lvalue_reference_v<A> || is_pointer_v<A>)&&(
-                        is_lvalue_reference_v<decltype(substitute<A>(
-                            declval<A>()))> ||
-                        is_pointer_v<decltype(substitute<A>(declval<A>()))>)> {
-    };
-
-    template <typename A,
-              typename Return = decltype(substitute<A>(declval<A>()))>
-    static inline auto translate(A &&a, registry * = nullptr)
-        -> enable_if_t<!is_registrable<A>::value, Return>
+    template <class A, class B>
+    static void register_(
+        A &&, B &&, enable_if_t<!is_registrable<A, B>::value, registry> *)
     {
-        static_assert(is_same_v<remove_reference_t<Return>,
-                                remove_reference_t<decltype(translate<Return>(
-                                    declval<Return>()))>>,
-                      "Translated value is not translate-stable");
-        return substitute<A>(std::forward<A>(a));
     }
 
-    template <typename A,
-              typename Return = decltype(substitute<A>(declval<A>()))>
-    static inline auto translate(A &&a, registry *reg = nullptr)
-        -> enable_if_t<is_registrable<A>::value, Return>
+    template <class A, class B>
+    static void register_(
+        A &&a, B &&b, enable_if_t<is_registrable<A, B>::value, registry> *reg)
+
     {
-        static_assert(
-            is_same_v<decltype(substitute<A>(declval<A>())),
-                      decltype(translate<A>(substitute<A>(declval<A>())))>,
-            "Translated value is not translate-stable");
-        auto b = substitute<A>(std::forward<A>(a));
         if (reg && (void *)&a != (void *)&b) {
             reg->emplace(get_void_p(b), make_pair(get_void_p(a), &typeid(A)));
         }
-        return b;
     }
 
     template <typename... A>
@@ -157,28 +138,35 @@ class Trans {
         return std::forward<A...>(a...);
     }
 
-    //    template <typename... A>
-    //    static inline decltype(declval<A...>()) translate(A... a,
-    //                                                      registry * =
-    //                                                      nullptr)
-    //    {
-    //        return std::forward<A...>(a...);
-    //    }
-
-    template <typename A>
-    static inline auto untranslate(A &&a, registry *reg = nullptr)
-        -> decltype(unsubstitute<A>(declval<A>()))
+    template <typename A, typename B = decltype(substitute<A>(declval<A>()))>
+    static inline B translate(A &&a, registry *reg = nullptr)
     {
-        static_assert(
-            is_same_v<decltype(unsubstitute<A>(declval<A>())),
-                      decltype(untranslate<A>(unsubstitute<A>(declval<A>())))>,
-            "Untranslated value is not untranslate-stable");
+        B b = substitute<A>(std::forward<A>(a));
+        static_assert(is_same_v<add_rvalue_reference_t<B>,
+                                decltype(translate<B>(declval<B>()))>,
+                      "Translated value is not translate-stable");
+        register_(a, b, reg);
+        return b;
+    }
+
+    template <typename... A>  // Variadic template = lower priority
+    static inline auto untranslate(A &&...a, registry * = nullptr)
+        -> decltype(declval<A...>())
+    {
+        return std::forward<A...>(a...);
+    }
+
+    template <typename A, typename B = decltype(unsubstitute<A>(declval<A>()))>
+    static inline auto untranslate(A &&a, registry *reg = nullptr) -> B
+    {
+        static_assert(is_same_v<add_rvalue_reference_t<B>,
+                                decltype(untranslate<B>(declval<B>()))>,
+                      "Untranslated value is not untranslate-stable");
         if (reg) {
             auto it = reg->find(&a);
             if (it != reg->end()) {
                 auto [b, t1] = it->second;
-                const type_info &t2 =
-                    typeid(decltype(unsubstitute<A>(declval<A>())));
+                const type_info &t2 = typeid(B);
                 if (*t1 != t2) {
                     throw runtime_error(
                         string("Mismatched un/translated typeid. In: ") +
@@ -189,13 +177,6 @@ class Trans {
             }
         }
         return unsubstitute<A>(a);
-    }
-
-    template <typename... A>  // Variadic template = lower priority
-    static inline auto untranslate(A &&...a, registry * = nullptr)
-        -> decltype(declval<A...>())
-    {
-        return std::forward<A...>(a...);
     }
 
     template <typename T, typename... Args>
@@ -455,7 +436,7 @@ class gmic_image_py {
     {
         Trans::registry reg;
         return Trans::untranslate(
-            image.*func(Trans::translate<Args>(args, reg)...), reg);
+            (image.*func)(Trans::translate<Args>(args, &reg)...), &reg);
     }
 
     template <typename I = size_t>
@@ -495,7 +476,9 @@ class gmic_image_py {
         return out.str();
     }
 
-    CImgT &get_image() { return image; }
+    [[nodiscard]] CImgT &get_image() noexcept { return image; }
+
+    [[nodiscard]] const CImgT &get_image() const noexcept { return image; }
 
     static void bind(nb::module_ &m)
     {
@@ -659,7 +642,11 @@ class gmic_list_py {
         return out.str();
     }
 
-    CImgList<float> &get_list() noexcept { return this->list; }
+    [[nodiscard]] CImgList<float> &get_list() noexcept { return this->list; }
+    [[nodiscard]] const CImgList<float> &get_list() const noexcept
+    {
+        return this->list;
+    }
 
     /**
      * Resizes the gmic_image_py cache to the
