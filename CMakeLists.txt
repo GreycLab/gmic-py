@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
+set(CMAKE_CXX_STANDARD 20)
 project(gmic-py C CXX)
-set(CMAKE_CXX_STANDARD 17)
 find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
 enable_testing()
 
@@ -29,8 +29,6 @@ add_custom_command(TARGET gmic-py POST_BUILD
         "$<TARGET_FILE:gmic-py>"
         "${CMAKE_CURRENT_SOURCE_DIR}/pysrc/gmic/$<TARGET_FILE_NAME:gmic-py>"
         COMMENT "Copying .so file to pysrc/")
-
-get_target_property(PROJECT_CXX_STANDARD gmic-py CXX_STANDARD)
 
 # Install the module
 install(TARGETS gmic-py
