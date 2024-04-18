@@ -52,150 +52,239 @@ template <typename T>
 class gmic_list_py;
 
 /**
- * Class that manages the translation of values between the python binding and
- * the native GMIC/CImg library
+ * Class that manages the translation of values back and forth between the
+ * python binding and the native GMIC/CImg library. Within this class,
+ * "translating" describes the python binding -> libgmic direction, and
+ * "untranslating" the opposite process.
  */
 class Trans {
-   public:
-    using registry = std::map<void *, pair<void *, const type_info *>>;
-
+    /// Get a void pointer from any pointer, for storing a into a registry
     template <typename A>
     [[maybe_unused]] static inline void *get_void_p(A *val)
     {
         return (void *)val;
     }
 
+    /// Get a void pointer from a reference, for storing a into a registry
     template <typename A>
     static inline void *get_void_p(A &val)
     {
         return (void *)&val;
     }
 
-    template <typename A>
-    [[maybe_unused]] static inline auto substitute(A &&img)
+    /**
+     * \defgroup substitute-un (Un)Substitution methods
+     * substitute(A) is defined for every A we want to "unwrap" before calling
+     * gmic, and unsubstitute(A) is the other way around.
+     * \remark Some unsubstitute(A) are registry-only and will always throw
+     * exceptions if called. They exist for unsubstitutions that are only valid
+     * if the value to return was unwrapped during translation in a first
+     * place, they are not valid for new values.
+     * \remark There is no requirement that translatable types should be
+     * untranslatable or vice versa
+     * \remark There are however static_assert's ensuring
+     * "stability" of both translation and untranslation : none of the
+     * (un)substitute functions should return a type that another overload
+     * would accept as argument.
+     * @{
+     */
+    /// gmic_image_py&lt;T&gt; -> CImg&lt;T&gt; unwrapping
+    template <typename gmic_image_py_t>
+    [[maybe_unused]] static inline auto substitute(gmic_image_py_t img)
         -> decltype(img.get_image())
     {
         return img.get_image();
     }
 
-    template <typename A>
-    [[maybe_unused]] static inline auto substitute(A &&list)
+    /// gmic_list_py&lt;T&gt -> CImgList&lt;T&gt unwrapping
+    template <typename gmic_list_py_t>
+    [[maybe_unused]] static inline auto substitute(gmic_list_py_t list)
         -> decltype(list.get_list())
     {
         return list.get_list();
     }
 
-    template <
-        typename A,
-        enable_if_t<is_same_v<remove_const_t<remove_reference_t<A>>, string>,
-                    bool> = true>
-    static inline const char *substitute(A &&str)
+    /// std::string&lt;char_t&gt; -> const char_t* unwrapping
+    template <typename string_t>
+    [[maybe_unused]] static inline auto substitute(string_t str)
+        -> decltype(str.c_str())
     {
         return str.c_str();
     }
 
+    /// CImg&lt;T&gt -> gmic_image_py&lt;T&gt wrapping
     template <
-        typename A, typename Ar = remove_reference_t<A>,
-        enable_if_t<is_same_v<Ar, CImg<typename Ar::value_type>>, bool> = true>
-    [[maybe_unused]] static inline auto unsubstitute(A &&img)
+        typename A,
+        enable_if_t<is_same_v<A, CImg<typename A::value_type>>, bool> = true>
+    [[maybe_unused]] static inline auto unsubstitute(A img)
     {
-        return gmic_image_py<typename Ar::value_type>(img);
+        return gmic_image_py<typename A::value_type>(img);
     }
 
-    template <typename A, typename Ar = remove_reference_t<A>,
-              enable_if_t<is_same_v<Ar, CImgList<typename Ar::value_type>>,
+    /// CImg&lt;T&gt& -> gmic_image_py&lt;T&gt& wrapping (registry-only)
+    template <
+        typename A,
+        enable_if_t<is_same_v<A, CImg<typename A::value_type> &>, bool> = true>
+    [[maybe_unused]] [[noreturn]] static inline auto unsubstitute(A &)
+    {
+        throw runtime_error("Cannot untranslate a CImg<T> reference");
+    }
+
+    /// CImgList&lt;T&gt& -> gmic_list_py&lt;T&gt& wrapping
+    template <typename A,
+              enable_if_t<is_same_v<A, CImgList<typename A::value_type>>,
                           bool> = true>
-    [[maybe_unused]] static inline auto unsubstitute(A &&list)
+    [[maybe_unused]] static inline auto unsubstitute(A list)
     {
-        return gmic_list_py<typename Ar::value_type>(list);
+        return gmic_list_py<typename A::value_type>(list);
     }
 
-    template <typename... A>
-    struct is_registrable
-        : integral_constant<bool, ((is_lvalue_reference_v<A> ||
-                                    is_pointer_v<A>)&&...)> {};
-
-    template <class A, class B>
-    static void register_(
-        A &&, B &&, enable_if_t<!is_registrable<A, B>::value, registry> *)
+    /// CImgList&lt;T&gt& -> gmic_list_py&lt;T&gt& wrapping (registry-only)
+    template <typename A,
+              enable_if_t<is_same_v<A, CImgList<typename A::value_type> &>,
+                          bool> = true>
+    [[maybe_unused]] static inline auto unsubstitute(A &)
     {
+        throw runtime_error("Cannot untranslate a CImgList<T> reference");
     }
+    /// @}
 
-    template <class A, class B>
-    static void register_(
-        A &&a, B &&b, enable_if_t<is_registrable<A, B>::value, registry> *reg)
+   public:
+    /**
+     * The registry is a simple map that will register every effective
+     * translation of values during argument translation, so that if any value
+     * to be untranslated back, its predecessor can be returned instead
+     *
+     * \remark can only be recorded translations where both the input and
+     * output values are either a pointer or a reference
+     */
+    using registry = std::map<void *, pair<void *, const type_info *>>;
 
+    /**
+     * \defgroup helper-types
+     * @{
+     * Helper type to check whether a type A is translatable
+     */
+    template <typename A, typename = void>
+    struct is_translatable : false_type {
+        /**
+         * alias for:
+         * - the return type of substitute(A) if defined
+         * - A otherwise */
+        using result = A;
+    };
+
+    template <typename A>
+    struct is_translatable<A, void_t<decltype(substitute(declval<A>()))>>
+        : true_type {
+        using result = decltype(substitute(declval<A>()));
+    };
+
+    /**
+     * Helper type to check whether a type A is untranslatable
+     */
+    template <typename A, typename = void>
+    struct is_untranslatable : false_type {
+        /**
+         * alias for:
+         * - the return type of unsubstitute(A) if defined
+         * - A otherwise */
+        using result = A;
+    };
+
+    template <typename A>
+    struct is_untranslatable<A, void_t<decltype(unsubstitute(declval<A>()))>>
+        : true_type {
+        using result = decltype(unsubstitute(declval<A>()));
+    };
+
+    template <typename A>
+    using translated = typename is_translatable<A>::result;
+    template <typename A>
+    using untranslated = typename is_untranslatable<A>::result;
+    /// }@
+
+    /**
+     * Entry point of the translation system
+     * @tparam A Type to translate
+     * @param a argument to translate
+     * @param reg registry to record translations
+     * @return substitute(a) if a suitable overload exists, otherwise a
+     */
+    template <typename A>
+    static inline translated<A> translate(A a, registry *reg = nullptr)
     {
-        if (reg && (void *)&a != (void *)&b) {
-            reg->emplace(get_void_p(b), make_pair(get_void_p(a), &typeid(A)));
-        }
-    }
-
-    template <typename... A>
-    static inline decltype(declval<A...>()) translate(A &&...a,
-                                                      registry * = nullptr)
-    {
-        return std::forward<A...>(a...);
-    }
-
-    template <typename A, typename B = decltype(substitute<A>(declval<A>()))>
-    static inline B translate(A &&a, registry *reg = nullptr)
-    {
-        B b = substitute<A>(std::forward<A>(a));
-        static_assert(is_same_v<add_rvalue_reference_t<B>,
-                                decltype(translate<B>(declval<B>()))>,
-                      "Translated value is not translate-stable");
-        register_(a, b, reg);
-        return b;
-    }
-
-    template <typename... A>  // Variadic template = lower priority
-    static inline auto untranslate(A &&...a, registry * = nullptr)
-        -> decltype(declval<A...>())
-    {
-        return std::forward<A...>(a...);
-    }
-
-    template <typename A, typename B = decltype(unsubstitute<A>(declval<A>()))>
-    static inline auto untranslate(A &&a, registry *reg = nullptr) -> B
-    {
-        static_assert(is_same_v<add_rvalue_reference_t<B>,
-                                decltype(untranslate<B>(declval<B>()))>,
-                      "Untranslated value is not untranslate-stable");
-        if (reg) {
-            auto it = reg->find(&a);
-            if (it != reg->end()) {
-                auto [b, t1] = it->second;
-                const type_info &t2 = typeid(B);
-                if (*t1 != t2) {
-                    throw runtime_error(
-                        string("Mismatched un/translated typeid. In: ") +
-                        t1->name() + ", Out: " + t2.name());
+        using B = translated<A>;
+        if constexpr (is_translatable<A>::value) {
+            B b = substitute<A>(std::forward<A>(a));
+            static_assert(is_same_v<B, decltype(translate<B>(declval<B>()))>,
+                          "Translated value is not translate-stable");
+            if constexpr ((is_lvalue_reference_v<A> || is_pointer_v<A>) &&
+                          (is_lvalue_reference_v<B> || is_pointer_v<B>)) {
+                if (reg && (void *)&a != (void *)&b) {
+                    reg->emplace(get_void_p(b),
+                                 make_pair(get_void_p(a), &typeid(A)));
                 }
-                return *static_cast<decltype(unsubstitute<A>(declval<A>())) *>(
-                    b);
             }
+            return b;
         }
-        return unsubstitute<A>(a);
+        else {
+            return a;
+        }
     }
 
-    template <typename T, typename... Args>
-    using can_assign = is_lvalue_reference<decltype(CImg<T>{}.assign(
-        translate<Args>(declval<Args>())...))>;
+    /**
+     * Entry point of the untranslation system
+     * @tparam A Type to untranslate
+     * @param a argument to untranslate
+     * @param reg registry to check
+     * @return substitute(a) if a suitable overload exists, otherwise a
+     */
     template <typename A>
-    using translated = decltype(translate<A>(declval<A>()));
-    template <typename A>
-    using untranslated = decltype(untranslate<A>(declval<A>()));
+    static inline untranslated<A> untranslate(A a, registry *reg = nullptr)
+    {
+        if constexpr (is_untranslatable<A>::value) {
+            using B = translated<A>;
+            static_assert(is_same_v<B, decltype(untranslate<B>(declval<B>()))>,
+                          "Untranslated value is not untranslate-stable");
+            if (reg) {
+                auto it = reg->find(&a);
+                if (it != reg->end()) {
+                    auto [b, t1] = it->second;
+                    const type_info &t2 = typeid(B);
+                    if (*t1 != t2) {
+                        throw runtime_error(
+                            string("Mismatched un/translated typeid. In: ") +
+                            t1->name() + ", Out: " + t2.name());
+                    }
+                    return *static_cast<decltype(unsubstitute<A>(
+                        declval<A>())) *>(b);
+                }
+            }
+            return unsubstitute<A>(a);
+        }
+        else {
+            return a;
+        }
+    }
 
+    /**
+     * Appends the signature of a given function, with its arguments' types
+     * translated, to a given docstring, and writes it to a char buffer
+     * @tparam Args Types of the pre-translation arguments
+     * @param buf Char buffer to write to
+     * @param N Buffer size
+     * @param doc Documentation to append the signature to
+     * @param func Name to use in the signature for the documented function
+     * @return buf passthrough
+     */
     template <typename... Args>
     static const char *assign_signature(char *buf, size_t N, const char *doc,
                                         const char *func)
     {
         char *max = buf + N;
         buf += snprintf(buf, N, "%s\n\nBinds %s(", doc, func);
-        vector<const char *> argtypes{
-            typeid(decltype(Trans::translate<Args>(declval<Args>())))
-                .name()...};
+        vector<const char *> argtypes{typeid(translated<Args>).name()...};
         bool first = true;
         for (auto &t : argtypes) {
             if (first) {
@@ -357,19 +446,20 @@ class gmic_image_py {
     }
 
     template <typename... Args>
-    explicit gmic_image_py(Args &&...args)
+    explicit gmic_image_py(Args... args)
     {
-        assign(std::forward<Args>(args)...);
+        assign<Args...>(args...);
     }
 
     ~gmic_image_py() = default;
 
     template <typename... Args>
-    auto assign(Args &&...args)
-        -> enable_if_t<Trans::can_assign<T, Args...>::value, gmic_image_py &>
+    auto assign(Args... args)
+        -> enable_if_t<is_lvalue_reference<decltype(CImgT{}.assign(
+                           declval<Trans::translated<Args>>()...))>::value,
+                       gmic_image_py &>
     {
-        image.assign(
-            Trans::template translate<Args>(std::forward<Args>(args))...);
+        image.assign(Trans::translate<Args>(args)...);
         return *this;
     }
 
@@ -429,15 +519,6 @@ class gmic_image_py {
     unsigned int height() { return image.height(); }
     unsigned int depth() { return image.depth(); }
     unsigned int spectrum() { return image.spectrum(); }
-
-    template <typename Return, typename... Args>
-    auto exec(Return (CImgT::*func)(Trans::translated<Args>...),
-              Args &&...args) -> Trans::untranslated<Return>
-    {
-        Trans::registry reg;
-        return Trans::untranslate(
-            (image.*func)(Trans::translate<Args>(args, &reg)...), &reg);
-    }
 
     template <typename I = size_t>
     vector<I> strides()
@@ -500,12 +581,15 @@ class gmic_image_py {
             Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc,  \
                                            "CImg<T>"),                   \
             ##__VA_ARGS__)                                               \
-        .def("assign", &gmic_image_py::assign<TYPES>,                    \
+        .def("assign",                                                   \
+             static_cast<gmic_image_py &(gmic_image_py::*)(TYPES)>(      \
+                 &gmic_image_py::assign<TYPES>),                         \
              Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc, \
                                             "CImg<T>::assign"),          \
              nb::rv_policy::none, ##__VA_ARGS__)
 
         // Bindings for CImg constructors and assign()'s
+        IMAGE_ASSIGN("Construct an empty image", ARGS());
         IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &), "other"_a);
         IMAGE_ASSIGN("Advanced copy constructor", ARGS(gmic_image_py &, bool),
                      "other"_a, "is_shared"_a);
@@ -520,8 +604,7 @@ class gmic_image_py {
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value"_a);
         IMAGE_ASSIGN(
             "Construct image with specified size and initialize pixel "
-            "values "
-            "from a value string",
+            "values from a value string",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int,
                  string &, bool),
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value_string"_a,
