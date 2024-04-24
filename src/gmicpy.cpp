@@ -514,6 +514,12 @@ class gmic_image_py {
             return arr;
     }
 
+    nb::object array_interface()
+    {
+        auto arr = to_native_ndarray();
+        return cast(arr).attr("__array_interface__");
+    }
+
     unsigned int width() { return image.width(); }
     unsigned int height() { return image.height(); }
     unsigned int depth() { return image.depth(); }
@@ -572,7 +578,10 @@ class gmic_image_py {
                 .def_prop_ro("shape", &gmic_image_py::shape_tuple)
                 .def_prop_ro("strides", &gmic_image_py::strides_tuple)
                 .def("__str__", &gmic_image_py::str)
-                .def("__repr__", &gmic_image_py::str);
+                .def("__repr__", &gmic_image_py::str)
+                .def_prop_ro("__array_interface__",
+                             &gmic_image_py::array_interface,
+                             nb::rv_policy::reference_internal);
         char doc_buf[1024];
 #define ARGS(...) __VA_ARGS__
 #define IMAGE_ASSIGN(doc, TYPES, ...)                                    \
