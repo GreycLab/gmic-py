@@ -846,7 +846,7 @@ static void bind(const nb::module_ &m)
 }
 }  // namespace interpreter_py
 
-NB_MODULE(_gmic, m)
+NB_MODULE(gmic, m)
 {
     {
         static char version[16];

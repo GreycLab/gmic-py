@@ -46,7 +46,7 @@ build-backend = "scikit_build_core.build"
 [tool.scikit-build]
 logging.level = "WARNING"
 minimum-version = "0.9"
-build-dir = "build/{wheel_tag}"
+build-dir = "build"
 
 [tool.scikit-build.cmake]
 version = ">=3.17"
@@ -55,6 +55,7 @@ targets = []
 
 [tool.scikit-build.sdist]
 include = []
+exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources"]
 reproducible = true
 cmake = false
 

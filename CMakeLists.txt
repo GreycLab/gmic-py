@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_CXX_STANDARD 20)
-project(gmic-py C CXX)
+project(gmic-py LANGUAGES C CXX)
 find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
-message("-- Using python executable: ${Python_EXECUTABLE}")
-enable_testing()
+message(STATUS "Using python executable: ${Python_EXECUTABLE}")
 
 add_subdirectory("lib/gmic" EXCLUDE_FROM_ALL)
 
@@ -28,23 +27,8 @@ target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "${SKBUILD_PROJECT_NAME}")
 
-#add_custom_command(TARGET gmic-py POST_BUILD
-#        COMMAND "${CMAKE_COMMAND}" -E create_symlink
-#        "$<TARGET_FILE:gmic-py>"
-#        "${CMAKE_CURRENT_SOURCE_DIR}/pysrc/$<TARGET_FILE_NAME:gmic-py>"
-#        COMMENT "Copying .so file to pysrc/")
-
 # Install the module
 if (DEFINED SKBUILD_PLATLIB_DIR)
     install(TARGETS gmic-py
-            #        EXCLUDE_FROM_ALL
-            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}
-    )
+            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR})
 endif ()
-
-add_test(NAME gmic-py-tests
-        COMMAND ${Python_EXECUTABLE} -m pytest # Or just COMMAND pytest
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-set_tests_properties(gmic-py-tests
-        PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/pysrc")
