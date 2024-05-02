@@ -1,9 +1,8 @@
 [project]
 name = "gmic"
-version = "3.3.6"
 description = "Python bindings for the G'MIC C++ image processing library"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 authors = [
     { "name" = "David Tschumperlé", "email" = "David.Tschumperle@ensicaen.fr" },
     { "name" = "Sébastien Fourey", "email" = "Sebastien.Fourey@ensicaen.fr" },
@@ -25,6 +24,7 @@ classifiers = [
     "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
     "Programming Language :: Python :: 3",
 ]
+dynamic = ["version"]
 
 dependencies = []
 

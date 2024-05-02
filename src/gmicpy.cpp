@@ -2,8 +2,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
-#include <nanobind/stl/unique_ptr.h>
-#include <nanobind/stl/vector.h>
 
 // Include gmic et CImg after nanobind
 #include <CImg.h>
@@ -26,6 +24,9 @@ using namespace std;
 using namespace cimg_library;
 
 static char ERRBUF[256];
+static const char *const ARRAY_INTERFACE = "__array_interface__";
+static const char *const DLPACK_INTERFACE = "__dlpack__";
+static const char *const DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
 
 void inspect(nb::ndarray<gmic_pixel_type, nb::device::cpu> a)
 {
@@ -277,8 +278,8 @@ template <typename A>
  * @param func Name to use in the signature for the documented function
  * @return buf passthrough
  */
-template <typename... Args>
-static const char *assign_signature(char *buf, size_t N, const char *doc,
+template <typename... Args, size_t N = 1024>
+static const char *assign_signature(char buf[N], const char *doc,
                                     const char *func)
 {
     char *max = buf + N;
@@ -304,7 +305,7 @@ template <typename Sh, typename St>
 bool is_c_contig(unsigned short ndim, Sh *shape, St *strides)
 {
     decltype((*shape) * (*strides)) acc = 1;
-    for (size_t i = ndim; i >= 0; --i) {
+    for (int i = ndim - 1; i >= 0; --i) {
         if (strides[i] != acc)
             return false;
         acc *= shape[i];
@@ -391,8 +392,8 @@ class gmic_image_py {
     }
 
     /**
-     * Copies a ndarray. Will reorder the data so that the data is contiguous
-     * in C-style order.
+     * Copies a ndarray. Will reorder the data so that the data is
+     * C-contiguous.
      * @tparam P Optional ndarray specifiers
      * @param array Input array whose data is <strong>in SDHW (gmic)
      * order</strong>
@@ -447,7 +448,7 @@ class gmic_image_py {
     template <typename... Args>
     explicit gmic_image_py(Args... args)
     {
-        assign<Args...>(args...);
+        assign(args...);
     }
 
     ~gmic_image_py() = default;
@@ -462,62 +463,88 @@ class gmic_image_py {
         return *this;
     }
 
-    template <class A>
-    auto assign(A arr)
-        -> enable_if_t<is_same<A, T4DArray<>>::value, gmic_image_py &>
+    template <class... P>
+    gmic_image_py &assign(TNDArray<P...> arr)
     {
-        image.assign(arr.shape(0), arr.shape(1), arr.shape(2), arr.shape(3));
+        if (arr.ndim() == 0 || arr.ndim() > 4) {
+            throw nb::value_error(
+                "Invalid ndarray dimensions for image "
+                "(should be 1 <= N <= 4)");
+        }
+        const auto N = arr.ndim();
+        array<size_t, 4> dim{1, 1, 1, 1}, strides{1, 1, 1, 1};
+        auto assign = [&](size_t from, size_t to) {
+            dim[to] = arr.shape(from);
+            strides[to] = static_cast<size_t>(arr.stride(from));
+        };
+        switch (N) {
+            case 4:
+                assign(1, 2);
+            case 3:
+                assign(0, 3);
+            case 2:
+                assign(N - 2, 1);
+            default:
+                assign(N - 1, 0);
+        }
+        image.assign(dim[0], dim[1], dim[2], dim[3]);
         if (is_c_contig(arr)) {
             std::copy_n(arr.data(), arr.size(), image.data());
         }
         else {
-            auto v = arr.view();
-            for (size_t c = 0; c < image.spectrum(); c++)
-                for (size_t d = 0; d < image.depth(); d++)
-                    for (size_t y = 0; y < image.depth(); y++)
-                        for (size_t x = 0; x < image.depth(); x++)
-                            image(x, y, d, c) = v(x, y, d, c);
+            for (size_t c = 0; c < dim[3]; c++) {
+                const size_t offc = c * strides[3];
+                for (size_t d = 0; d < dim[2]; d++) {
+                    const size_t offd = offc + d * strides[2];
+                    for (size_t y = 0; y < dim[1]; y++) {
+                        const size_t offy = offd + y * strides[1];
+                        for (size_t x = 0; x < dim[0]; x++) {
+                            image(x, y, d, c) = offy + x * strides[0];
+                        }
+                    }
+                }
+            }
         }
         return *this;
     }
 
-    static constexpr auto TO_NDARRAY_DOC =
-        "Returns a ndarray wrapper of the underlying data of the image in "
-        "its "
-        "native (SDHW) order";
-    nb::ndarray<T, nb::numpy, nb::device::cpu, nb::ndim<4>> to_native_ndarray()
+    template <typename t, class... P>
+        requires(!same_as<t, T>)
+    gmic_image_py &assign(nb::ndarray<t, nb::device::cpu, P...> arr)
     {
-        return nb::ndarray<T, nb::numpy, nb::device::cpu, nb::ndim<4>>(
+        gmic_image_py<t> img(arr);
+        assign(img);
+        return *this;
+    }
+
+    gmic_image_py &assign(nb::object &obj)
+    {
+        if (!hasattr(obj, ARRAY_INTERFACE))
+            throw nb::next_overload("Missing __array_interface__");
+        nb::dict ai = obj.attr(ARRAY_INTERFACE);
+    }
+
+    template <typename... P>
+    T4DArray<P...> as_ndarray()
+    {
+        return T4DArray<P...>(
             image.data(),
             {image._spectrum, image._depth, image._height, image._width},
             nb::handle());
     }
 
     template <typename... P>
-    TNDArray<P...> to_ndarray(const string &dims_str, bool copy)
+    T4DArray<P...> to_ndarray()
     {
-        const auto self = nb::find(this);
-        auto dims = parse_dims(dims_str);
-        size_t ndims = dims_str.length();
-        auto nshape = this->shape<size_t>();
-        auto nstrides = this->strides<int64_t>();
-
-        auto shape = reorder_to_spec(dims, nshape);
-        auto strides = reorder_to_spec(dims, nstrides);
-
-        auto arr = TNDArray<P...>(image.data(), ndims, shape.data(), self,
-                                  strides.data());
-
-        if (copy)
-            return copy_ndarray<P...>(arr);
-        else
-            return arr;
+        return copy_ndarray(as_ndarray<P...>());
     }
+
+    auto dlpack_device() { return nb::make_tuple(nb::device::cpu::value, 0); }
 
     nb::object array_interface()
     {
-        auto arr = to_native_ndarray();
-        return cast(arr).attr("__array_interface__");
+        auto arr = as_ndarray<nb::numpy>();
+        return cast(arr).attr(ARRAY_INTERFACE);
     }
 
     unsigned int width() { return image.width(); }
@@ -557,8 +584,8 @@ class gmic_image_py {
         out << "<" << nb::type_name(nb::type<gmic_image_py>()).c_str()
             << " at " << static_cast<const void *>(this)
             << ", data at: " << static_cast<const void *>(image.data())
-            << ", w×h×s×d=" << image.width() << "×" << image.height() << "×"
-            << image.spectrum() << "×" << image.depth() << ">";
+            << ", w×h×d×s=" << image.width() << "×" << image.height() << "×"
+            << image.depth() << "×" << image.spectrum() << ">";
         return out.str();
     }
 
@@ -571,29 +598,52 @@ class gmic_image_py {
         auto cls =
             nb::class_<gmic_image_py<T>>(m, CLASSNAME)
                 .def_ro_static("DIMS", &gmic_image_py::DIMS)
-                .def("to_ndarray", &gmic_image_py::to_native_ndarray,
-                     TO_NDARRAY_DOC, nb::rv_policy::reference_internal)
-                .def("to_ndarray",
-                     &gmic_image_py::to_ndarray<nb::numpy, nb::device::cpu>)
-                .def_prop_ro("shape", &gmic_image_py::shape_tuple)
-                .def_prop_ro("strides", &gmic_image_py::strides_tuple)
+                .def(DLPACK_INTERFACE, &gmic_image_py::as_ndarray<>,
+                     nb::rv_policy::reference_internal)
+                .def(DLPACK_DEVICE_INTERFACE, &gmic_image_py::dlpack_device)
+                .def_prop_ro(ARRAY_INTERFACE, &gmic_image_py::array_interface,
+                             nb::rv_policy::reference_internal)
+                .def("as_dlpack", &gmic_image_py::as_ndarray<>,
+                     nb::rv_policy::reference_internal,
+                     "Returns a view of the underlying data in a DLPack "
+                     "capsule")
+                .def(
+                    "to_dlpack", &gmic_image_py::to_ndarray<>,
+                    nb::rv_policy::reference_internal,
+                    "Returns a copy of the underlying data in a Numpy NDArray")
+                .def(
+                    "as_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
+                    nb::rv_policy::reference_internal,
+                    "Returns a view of the underlying data in a Numpy NDArray")
+                .def(
+                    "to_numpy", &gmic_image_py::to_ndarray<nb::numpy>,
+                    nb::rv_policy::reference_internal,
+                    "Returns a copy of the underlying data in a Numpy NDArray")
+                .def_prop_ro("shape", &gmic_image_py::shape_tuple,
+                             "Tuple of dimensions of this image")
+                .def_prop_ro("strides", &gmic_image_py::strides_tuple,
+                             "Tuple of strides of this image")
+                .def_prop_ro("width", &gmic_image_py::width,
+                             "Width (1st dimension) of the image")
+                .def_prop_ro("height", &gmic_image_py::height,
+                             "Height (2nd dimension) of the image")
+                .def_prop_ro("depth", &gmic_image_py::depth,
+                             "Depth (3rd dimension) of the image")
+                .def_prop_ro(
+                    "spectrum", &gmic_image_py::spectrum,
+                    "Spectrum (i.e. channels, 4th dimension) of the image")
                 .def("__str__", &gmic_image_py::str)
-                .def("__repr__", &gmic_image_py::str)
-                .def_prop_ro("__array_interface__",
-                             &gmic_image_py::array_interface,
-                             nb::rv_policy::reference_internal);
+                .def("__repr__", &gmic_image_py::str);
         char doc_buf[1024];
 #define ARGS(...) __VA_ARGS__
-#define IMAGE_ASSIGN(doc, TYPES, ...)                                    \
-    cls.def(nb::init<TYPES>(),                                           \
-            Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc,  \
-                                           "CImg<T>"),                   \
-            ##__VA_ARGS__)                                               \
-        .def("assign",                                                   \
-             static_cast<gmic_image_py &(gmic_image_py::*)(TYPES)>(      \
-                 &gmic_image_py::assign<TYPES>),                         \
-             Trans::assign_signature<TYPES>(doc_buf, size(doc_buf), doc, \
-                                            "CImg<T>::assign"),          \
+#define IMAGE_ASSIGN(doc, TYPES, ...)                                         \
+    cls.def(nb::init<TYPES>(),                                                \
+            Trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>"),          \
+            ##__VA_ARGS__)                                                    \
+        .def("assign",                                                        \
+             static_cast<gmic_image_py &(gmic_image_py::*)(TYPES)>(           \
+                 &gmic_image_py::assign),                                     \
+             Trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>::assign"), \
              nb::rv_policy::none, ##__VA_ARGS__)
         // Bindings for CImg constructors and assign()'s
         IMAGE_ASSIGN("Construct an empty image", ARGS());
@@ -629,7 +679,7 @@ class gmic_image_py {
             "value"_a);
 
         // gmic-py specific bindings
-        IMAGE_ASSIGN("Construct an image from an ndarray", ARGS(T4DArray<>),
+        IMAGE_ASSIGN("Construct an image from an ndarray", ARGS(TNDArray<>),
                      "array"_a);
     }
 #undef IMAGE_ASSIGN
@@ -815,8 +865,12 @@ NB_MODULE(_gmic, m)
         m.attr("__build__") = build;
     }
 
+    static_assert(Trans::is_translatable<string>::value);
+
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");
+    static_assert(Trans::is_translatable<gmic_image_py<> &>::value);
     gmic_image_py<>::bind(m);
+    static_assert(Trans::is_translatable<gmic_list_py<> &>::value);
     gmic_list_py<>::bind(m);
     interpreter_py::bind(m);
 
