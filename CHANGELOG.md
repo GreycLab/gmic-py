@@ -3,7 +3,8 @@
 `gmic-py` embeds a libgmic C++ recompiled .so and adds C/Python binding to it.
 Here are major changes to the project.
 
-All versions listed here correspond to a [downloadable package release from G'MIC's pypi.org project](https://pypi.org/project/gmic/#history).
+All versions listed here correspond to
+a [downloadable package release from G'MIC's pypi.org project](https://pypi.org/project/gmic/#history).
 
 ## 2.9.4-alpha1 (2020-12-23)
 
@@ -15,14 +16,16 @@ All versions listed here correspond to a [downloadable package release from G'MI
 
 - nothing new, just wrapping ligbmic 2.9.1
 - the pytest suites are still not green, this is intened and will be fixed for 2.9.4
-- releasing this as a stable version which spares users from specifying a `==<version number>` suffix when pip installing
-- almost synchronous with the [tutorials 1,2 & 3 end of writing](https://gmic-py.readthedocs.io/en/latest/tutorials.html).
+- releasing this as a stable version which spares users from specifying a `==<version number>` suffix when pip
+  installing
+- almost synchronous with
+  the [tutorials 1,2 & 3 end of writing](https://gmic-py.readthedocs.io/en/latest/tutorials.html).
 
 ## 2.9.1-alpha6 (2020-12-09)
 
-- discarding libcurl as a dependency, relying on libgmic/CImg's `curl` executable detection https://github.com/myselfhimself/gmic-py/issues/82
+- discarding libcurl as a dependency, relying on libgmic/CImg's `curl` executable
+  detection https://github.com/myselfhimself/gmic-py/issues/82
 - still linux only for now
-
 
 ## 2.9.1-alpha5 (2020-10-23)
 
@@ -30,8 +33,7 @@ All versions listed here correspond to a [downloadable package release from G'MI
 - alpha release with only toolkit-related pytest suites green
 - now more fledged documentation at https://gmic-py.readthedocs.io/
 - Early input/output support for Numpy, PIL, Scikit-Image.
-- Linux support only, MacOS support is dropped.
-
+- Linux support only, macOS support is dropped.
 
 ## 2.9.0 (2020-06-21)
 

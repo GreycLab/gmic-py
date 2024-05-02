@@ -20,24 +20,27 @@ list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
 # Add the module to compile
+if (NOT SKBUILD_PROJECT_NAME)
+    set(SKBUILD_PROJECT_NAME gmic)
+endif ()
 nanobind_add_module(gmic-py "src/gmicpy.cpp")
-set_target_properties(gmic-py PROPERTIES
-        OUTPUT_NAME "gmic")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
+set_target_properties(gmic-py PROPERTIES
+        OUTPUT_NAME "${SKBUILD_PROJECT_NAME}")
 
-add_custom_command(TARGET gmic-py POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E create_symlink
-        "$<TARGET_FILE:gmic-py>"
-        "${CMAKE_CURRENT_SOURCE_DIR}/pysrc/$<TARGET_FILE_NAME:gmic-py>"
-        COMMENT "Copying .so file to pysrc/")
+#add_custom_command(TARGET gmic-py POST_BUILD
+#        COMMAND "${CMAKE_COMMAND}" -E create_symlink
+#        "$<TARGET_FILE:gmic-py>"
+#        "${CMAKE_CURRENT_SOURCE_DIR}/pysrc/$<TARGET_FILE_NAME:gmic-py>"
+#        COMMENT "Copying .so file to pysrc/")
 
 # Install the module
-install(TARGETS gmic-py
-        EXCLUDE_FROM_ALL
-        COMPONENT python_modules
-        #        DESTINATION ${PY_BUILD_CMAKE_MODULE_NAME}
-        DESTINATION .
-)
+if (DEFINED SKBUILD_PLATLIB_DIR)
+    install(TARGETS gmic-py
+            #        EXCLUDE_FROM_ALL
+            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}
+    )
+endif ()
 
 add_test(NAME gmic-py-tests
         COMMAND ${Python_EXECUTABLE} -m pytest # Or just COMMAND pytest
