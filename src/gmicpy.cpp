@@ -626,28 +626,112 @@ class gmic_image_py {
 #undef IMAGE_ASSIGN
 };
 
-template <typename T, typename I>
+template <typename T>
 class gmic_list_base {
+   private:
+    vector<gmic_image_py<T> *> data_py;
+
    public:
-    using Item = I;
+    static constexpr auto CLASSNAME = "ImageList";
+    using Item = gmic_image_py<T> &;
     using List = CImgList<T>;
 
    protected:
-    List list;
+    [[nodiscard]] virtual List &get_list() = 0;
+    [[nodiscard]] virtual const List &get_list() const = 0;
+
+    gmic_list_base() = default;
+
+    explicit gmic_list_base(unsigned int width) : data_py(width) {}
+
+    virtual ~gmic_list_base()
+    {
+        for (const auto *img : data_py)
+            if (img != nullptr)
+                delete img;
+        data_py.clear();
+    }
 
    public:
-    explicit gmic_list_base() = default;
+    void resize() { data_py.resize(get_list().size()); }
 
-    explicit gmic_list_base(List &list) : list(list) {}
+    Item get(const unsigned int i)
+    {
+        if (i >= get_list().size())
+            throw out_of_range("Out of range or gmic_list_py object");
+        if (i >= data_py.size())
+            data_py.resize(i + 1);
 
-    explicit gmic_list_base(List &&list) : list(list) {}
+        auto *img = data_py[i];
+        if (img == nullptr) {
+            img = data_py[i] = new gmic_image_py<T>(this->get_list()(i), true);
+        }
+        return *img;
+    }
 
-    class iterator : std::iterator<std::forward_iterator_tag, Item> {
-        gmic_list_base &list;
+    void set(const unsigned int i, Item item)
+    {
+        if (data_py[i] != nullptr)
+            delete data_py[i];
+        get_list()(i).assign(item.get_image());
+    }
+};
+
+template <typename T>
+concept Character = std::same_as<T, char> || std::same_as<T, signed char> ||
+                    std::same_as<T, unsigned char> ||
+                    std::same_as<T, wchar_t> || std::same_as<T, char8_t> ||
+                    std::same_as<T, char16_t> || std::same_as<T, char32_t>;
+
+template <Character CharT>
+class gmic_list_base<CharT> {
+   public:
+    using Item = basic_string<CharT>;
+    using List = CImgList<CharT>;
+    static constexpr auto CLASSNAME = "StringList";
+
+   protected:
+    [[nodiscard]] virtual List &get_list() = 0;
+    [[nodiscard]] virtual const List &get_list() const = 0;
+
+   public:
+    Item get(const unsigned int i) { return {get_list()(i)}; }
+
+    void set(const unsigned int i, Item item)
+    {
+        get_list()(i).assign(CImg<CharT>::string(item.c_str()));
+    }
+};
+
+using gmic_charlist_py = gmic_list_py<char>;
+template <typename T = gmic_pixel_type>
+class gmic_list_py : public gmic_list_base<T> {
+   private:
+    using List = gmic_list_base<T>::List;
+    using Item = gmic_list_base<T>::Item;
+    List list;
+
+   protected:
+   public:
+    explicit gmic_list_py() = default;
+
+    explicit gmic_list_py(CImgList<T> &list)
+        : gmic_list_base<T>(list._width), list(list)
+    {
+    }
+
+    explicit gmic_list_py(CImgList<T> &&list)
+        : gmic_list_base<T>(list._width), list(list)
+    {
+    }
+
+    class iterator
+        : std::iterator<std::forward_iterator_tag, remove_reference_t<Item>> {
+        gmic_list_py &list;
         unsigned int iter = 0;
 
        public:
-        explicit iterator(gmic_list_base &list, const unsigned int start = 0)
+        explicit iterator(gmic_list_py &list, const unsigned int start = 0)
             : list(list), iter(start)
         {
         }
@@ -664,15 +748,13 @@ class gmic_list_base {
         auto operator*() const { return list[iter]; }
     };
 
+    Item operator[](unsigned int i) { return this->get(i); }
+
     size_t size() { return list._width; }
 
     iterator begin() { return iterator(*this); }
 
     iterator end() { return iterator(*this, size()); }
-
-    virtual Item operator[](unsigned int i) = 0;
-
-    virtual void set(unsigned int, Item) = 0;
 
     [[nodiscard]] auto iter()
     {
@@ -698,110 +780,25 @@ class gmic_list_base {
         return out.str();
     }
 
-    [[nodiscard]] List &get_list() noexcept { return this->list; }
-    [[nodiscard]] const List &get_list() const noexcept { return this->list; }
-
-    /**
-     * Resizes the gmic_image_py cache to the
-     */
-    virtual void resize() {}
-
-    template <class C>
-    static void bind(nb::module_ &m, const char *classname)
+    [[nodiscard]] List &get_list() noexcept override { return this->list; }
+    [[nodiscard]] const List &get_list() const noexcept override
     {
-        nb::class_<C>(m, classname)
-            .def("__iter__", &gmic_list_base::iter)
-            .def("__len__", &gmic_list_base::size)
-            .def("__str__", &gmic_list_base::str)
-            .def("__getitem__", &gmic_list_base::operator[], "i"_a,
+        return this->list;
+    }
+
+    static void bind(nb::module_ &m)
+    {
+        nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSNAME)
+            .def("__iter__", &gmic_list_py::iter)
+            .def("__len__", &gmic_list_py::size)
+            .def("__str__", &gmic_list_py::str)
+            .def("__getitem__", &gmic_list_py::get, "i"_a,
                  nb::rv_policy::reference_internal)
-            .def("__setitem__", &gmic_list_base::set, "i"_a, "v"_a);
-    }
-};
-
-template <typename T = gmic_pixel_type>
-class gmic_list_py : public gmic_list_base<T, gmic_image_py<T> &> {
-   private:
-    using Base = gmic_list_base<T, gmic_image_py<T>>;
-    vector<gmic_image_py<T> *> data_py;
-
-   public:
-    constexpr static auto CLASSNAME = "GmicList";
-
-    explicit gmic_list_py() = default;
-
-    explicit gmic_list_py(CImgList<T> &list) : data_py(list._width), Base(list)
-    {
-    }
-
-    explicit gmic_list_py(CImgList<T> &&list)
-        : data_py(list._width), Base(list)
-    {
-    }
-
-    virtual ~gmic_list_py()
-    {
-        for (const auto *img : data_py)
-            if (img != nullptr)
-                delete img;
-        data_py.clear();
-    }
-
-    Base::Item &operator[](const unsigned int i) override
-    {
-        if (i >= this->size())
-            throw out_of_range("Out of range or gmic_list_py object");
-        if (i >= data_py.size())
-            data_py.resize(i + 1);
-
-        auto *img = data_py[i];
-        if (img == nullptr) {
-            img = data_py[i] = new gmic_image_py<T>(this->list(i), true);
-        }
-        return *img;
-    }
-
-    void set(unsigned int i, Base::Item &item) override
-    {
-        this->list(i).assign(item.get_image());
-    }
-
-    void resize() override { data_py.resize(this->size()); }
-
-    static void bind(nb::module_ &m)
-    {
-        Base::template bind<gmic_list_py>(m, CLASSNAME);
-    }
-};
-
-class gmic_charlist_py : public gmic_list_base<char, string> {
-   private:
-    using Base = gmic_list_base<char, string>;
-
-   public:
-    constexpr static auto CLASSNAME = "GmicList";
-
-    explicit gmic_charlist_py() = default;
-
-    explicit gmic_charlist_py(List &list) : Base(list) {}
-
-    explicit gmic_charlist_py(List &&list) : Base(list) {}
-
-    Item operator[](const unsigned int i) override { return {this->list(i)}; }
-
-    void set(unsigned int i, Item item) override
-    {
-        this->list(i).assign(CImg<char>::string(item.c_str()));
-    }
-
-    static void bind(nb::module_ &m)
-    {
-        Base::template bind<gmic_charlist_py>(m, CLASSNAME);
+            .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a);
     }
 };
 
 namespace interpreter_py {
-constexpr static auto CLASSNAME = "Gmic";
 template <typename T = gmic_pixel_type>
 gmic_list_py<T> *run(gmic &gmic, const char *cmd, gmic_list_py<T> *img_list,
                      optional<nb::handle> img_names)
@@ -842,8 +839,8 @@ gmic_list_py<T> *run(gmic &gmic, const char *cmd, gmic_list_py<T> *img_list,
 }
 
 template <typename T = gmic_pixel_type>
-gmic_list_py<T> *static_run(const char *cmd, gmic_list_py<T> *img_list,
-                            optional<nb::handle> img_names)
+auto static_run(const char *cmd, gmic_list_py<T> *img_list,
+                optional<nb::handle> img_names)
 {
     static unique_ptr<gmic> inter;
     if (!inter)
@@ -859,8 +856,9 @@ string str(const gmic inst)
     return out.str();
 }
 
+constexpr static auto CLASSNAME = "Gmic";
 template <typename T = gmic_pixel_type>
-static void bind(const nb::module_ &m)
+static void bind(nb::module_ &m)
 {
     nb::class_<gmic>(m, CLASSNAME)
         .def("run", &interpreter_py::run<T>, "cmd"_a,
@@ -868,6 +866,9 @@ static void bind(const nb::module_ &m)
              nb::rv_policy::take_ownership)
         .def("__str__", &interpreter_py::str)
         .def(nb::init());
+    m.def("run", &interpreter_py::static_run<T>, "cmd"_a,
+          "img_list"_a = nb::none(), "img_names"_a = nb::none(),
+          nb::rv_policy::take_ownership);
 }
 }  // namespace interpreter_py
 
@@ -893,11 +894,16 @@ NB_MODULE(gmic, m)
     static_assert(Trans::is_translatable<string>::value);
 
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");
+
     static_assert(Trans::is_translatable<gmic_image_py<> &>::value);
     gmic_image_py<>::bind(m);
+
     static_assert(Trans::is_translatable<gmic_list_py<> &>::value);
     gmic_list_py<>::bind(m);
+
+    static_assert(Trans::is_translatable<gmic_charlist_py &>::value);
     gmic_charlist_py::bind(m);
+
     interpreter_py::bind(m);
 
     const auto gmic_ex = nb::exception<  // NOLINT(*-throw-keyword-missing)
