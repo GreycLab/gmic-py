@@ -7,6 +7,7 @@
 #include <CImg.h>
 #include <gmic.h>
 
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -311,8 +312,9 @@ bool is_c_contig(nb::ndarray<P...> arr)
     return is_c_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
 }
 
-template <typename T = gmic_pixel_type>
-class gmic_image_py : public CImg<T> {
+template <class T = gmic_pixel_type>
+class gmic_image_py {
+   public:
     template <class... P>
     using TNDArray = nb::ndarray<T, nb::device::cpu, P...>;
     template <class... P>
@@ -361,36 +363,43 @@ class gmic_image_py : public CImg<T> {
         return TNDArray<P...>(dest, array.ndim(), shape, owner);
     }
 
-   public:
     constexpr static auto CLASSNAME = "GmicImage";
-    gmic_image_py() : CImg<T>() {}
+
+    template <class I, class... Args>
+    struct can_native_init : false_type {};
 
     template <class... Args>
-    explicit gmic_image_py(Args... args)
-    {
-        py_assign(args...);
-    }
+    struct can_native_init<
+        enable_if_t<
+            is_same_v<CImg<T>, decltype(CImg<T>(
+                                   declval<Trans::translated<Args>>()...))>,
+            CImg<T>>,
+        Args...> : true_type{};
 
-    ~gmic_image_py() = default;
-
-    static gmic_image_py &wrap(CImg<T> &img)
+    template <class... Args>
+    static void new_image(CImg<T> *img, Args... args)
     {
-        static_assert(sizeof(gmic_image_py) == sizeof(CImg<float>));
-        return static_cast<gmic_image_py &>(img);
+        if constexpr (can_native_init<CImg<T>, Args...>::value) {
+            new (img) CImg<T>(Trans::translate<Args>(args)...);
+        }
+        else {
+            new (img) CImg<T>();
+            assign(*img, args...);
+        }
     }
 
     template <class... Args>
-    auto py_assign(Args... args)
-        -> enable_if_t<is_lvalue_reference<decltype(CImg<T>{}.assign(
-                           declval<Trans::translated<Args>>()...))>::value,
-                       gmic_image_py<T> &>
+    static auto assign(CImg<T> &img, Args... args)
+        -> enable_if_t<is_lvalue_reference_v<decltype(CImg<T>{}.assign(
+                           declval<Trans::translated<Args>>()...))>,
+                       CImg<T> &>
     {
-        this->assign(Trans::translate<Args>(args)...);
-        return *this;
+        img.assign(Trans::translate<Args>(args)...);
+        return img;
     }
 
     template <class... P>
-    gmic_image_py &py_assign(TNDArray<P...> arr)
+    static CImg<T> &assign(CImg<T> &img, TNDArray<P...> arr)
     {
         if (arr.ndim() == 0 || arr.ndim() > 4) {
             throw nb::value_error(
@@ -399,125 +408,117 @@ class gmic_image_py : public CImg<T> {
         }
         const auto N = arr.ndim();
         array<size_t, 4> dim{1, 1, 1, 1}, strides{1, 1, 1, 1};
-        auto assign = [&](size_t from, size_t to) {
-            dim[to] = arr.shape(from);
-            strides[to] = static_cast<size_t>(arr.stride(from));
-        };
-        switch (N) {
-            case 4:
-                assign(1, 2);
-            case 3:
-                assign(0, 3);
-            case 2:
-                assign(N - 2, 1);
-            default:
-                assign(N - 1, 0);
+        for (size_t i = 0; i < N; i++) {
+            dim[i] = arr.shape(i);
+            strides[i] = static_cast<size_t>(arr.stride(i));
         }
-        this->assign(dim[0], dim[1], dim[2], dim[3]);
+        return assign(img, arr, dim, strides);
+    }
+
+    template <class... P>
+    static CImg<T> &assign(CImg<T> &img, TNDArray<P...> &arr,
+                           const array<size_t, 4> &shape,
+                           const array<size_t, 4> &strides)
+    {
+        img.assign(shape[3], shape[2], shape[1], shape[0]);
         if (is_c_contig(arr)) {
-            std::copy_n(arr.data(), arr.size(), this->data());
+            copy_n(arr.data(), arr.size(), img.data());
         }
         else {
-            for (size_t c = 0; c < dim[3]; c++) {
-                const size_t offc = c * strides[3];
-                for (size_t d = 0; d < dim[2]; d++) {
-                    const size_t offd = offc + d * strides[2];
-                    for (size_t y = 0; y < dim[1]; y++) {
-                        const size_t offy = offd + y * strides[1];
-                        for (size_t x = 0; x < dim[0]; x++) {
-                            (*this)(x, y, d, c) = offy + x * strides[0];
+            for (size_t c = 0; c < shape[0]; c++) {
+                const size_t offc = c * strides[0];
+                for (size_t d = 0; d < shape[1]; d++) {
+                    const size_t offd = offc + d * strides[1];
+                    for (size_t y = 0; y < shape[2]; y++) {
+                        const size_t offy = offd + y * strides[2];
+                        for (size_t x = 0; x < shape[3]; x++) {
+                            img(x, y, d, c) = offy + x * strides[3];
                         }
                     }
                 }
             }
         }
-        return *this;
+        return img;
     }
 
     template <class t, class... P>
         requires(!same_as<t, T>)
-    gmic_image_py &py_assign(nb::ndarray<t, nb::device::cpu, P...> arr)
+    static CImg<T> &assign(CImg<T> &img,
+                           nb::ndarray<t, nb::device::cpu, P...> arr)
     {
-        gmic_image_py<t> img(arr);
-        assign(img);
-        return *this;
-    }
-
-    gmic_image_py &py_assign(nb::object &obj)
-    {
-        if (!hasattr(obj, ARRAY_INTERFACE))
-            throw nb::next_overload("Missing __array_interface__");
-        nb::dict ai = obj.attr(ARRAY_INTERFACE);
+        CImg<t> img2(arr);
+        img.assign(img2);
+        return img;
     }
 
     template <class... P>
-    T4DArray<P...> as_ndarray()
+    static T4DArray<P...> as_ndarray(CImg<T> &img)
     {
         return T4DArray<P...>(
-            this->data(),
-            {this->_spectrum, this->_depth, this->_height, this->_width},
+            img.data(), {img._spectrum, img._depth, img._height, img._width},
             nb::handle());
     }
 
     template <class... P>
-    T4DArray<P...> to_ndarray()
+    static T4DArray<P...> to_ndarray(CImg<T> &img)
     {
-        return copy_ndarray(as_ndarray<P...>());
+        return copy_ndarray(as_ndarray<P...>(img));
     }
 
-    auto dlpack_device() { return nb::make_tuple(nb::device::cpu::value, 0); }
-
-    nb::object array_interface()
+    static auto dlpack_device(CImg<T> &)
     {
-        auto arr = as_ndarray<nb::numpy>();
+        return nb::make_tuple(nb::device::cpu::value, 0);
+    }
+
+    static nb::object array_interface(CImg<T> &img)
+    {
+        auto arr = as_ndarray<nb::numpy>(img);
         return cast(arr).attr(ARRAY_INTERFACE);
     }
 
     template <class I = size_t>
-    vector<I> strides()
+    static vector<I> strides(CImg<T> &img)
     {
         constexpr I S = sizeof(T);
-        return {S * this->width() * this->height() * this->depth(),
-                S * this->width() * this->height(), S * this->width(), S};
+        return {S * img.width() * img.height() * img.depth(),
+                S * img.width() * img.height(), S * img.width(), S};
     }
 
-    nb::tuple strides_tuple()
+    static nb::tuple strides_tuple(CImg<T> &img)
     {
-        const auto s = strides();
+        const auto s = strides(img);
         return nb::make_tuple(s[0], s[1], s[2], s[3]);
     }
 
     template <class I = size_t>
-    vector<I> shape()
+    static vector<I> shape(CImg<T> &img)
     {
-        return {static_cast<I>(this->spectrum()),
-                static_cast<I>(this->depth()), static_cast<I>(this->height()),
-                static_cast<I>(this->width())};
+        return {static_cast<I>(img.spectrum()), static_cast<I>(img.depth()),
+                static_cast<I>(img.height()), static_cast<I>(img.width())};
     }
 
-    nb::tuple shape_tuple()
+    static nb::tuple shape_tuple(CImg<T> &img)
     {
-        return nb::make_tuple(this->spectrum(), this->depth(), this->height(),
-                              this->width());
+        return nb::make_tuple(img.spectrum(), img.depth(), img.height(),
+                              img.width());
     }
 
-    [[nodiscard]] string str() const
+    [[nodiscard]] static string str(CImg<T> &img)
     {
         stringstream out;
-        out << "<" << nb::type_name(nb::type<gmic_image_py>()).c_str()
-            << " at " << static_cast<const void *>(this)
-            << ", data at: " << static_cast<const void *>(this->data())
-            << ", w×h×d×s=" << this->width() << "×" << this->height() << "×"
-            << this->depth() << "×" << this->spectrum() << ">";
+        out << "<" << nb::type_name(nb::type<CImg<T>>()).c_str() << " at "
+            << static_cast<const void *>(&img)
+            << ", data at: " << static_cast<const void *>(img.data())
+            << ", w×h×d×s=" << img.width() << "×" << img.height() << "×"
+            << img.depth() << "×" << img.spectrum() << ">";
         return out.str();
     }
 
-    [[nodiscard]] explicit operator string() const { return str(); }
-
     static void bind(nb::module_ &m)
     {
+        using Img = CImg<T>;
         auto cls =
-            nb::class_<gmic_image_py<T>>(m, CLASSNAME)
+            nb::class_<Img>(m, CLASSNAME)
                 .def(DLPACK_INTERFACE, &gmic_image_py::as_ndarray<>,
                      nb::rv_policy::reference_internal)
                 .def(DLPACK_DEVICE_INTERFACE, &gmic_image_py::dlpack_device)
@@ -528,7 +529,7 @@ class gmic_image_py : public CImg<T> {
                      "Returns a view of the underlying data as a"
                      " DLPack capsule")
                 .def("to_dlpack", &gmic_image_py::to_ndarray<>,
-                     nb::rv_policy::reference_internal,
+                     nb::rv_policy::take_ownership,
                      "Returns a copy of the underlying data as a"
                      " DLPack capsule")
                 .def(
@@ -537,39 +538,47 @@ class gmic_image_py : public CImg<T> {
                     "Returns a view of the underlying data as a Numpy NDArray")
                 .def(
                     "to_numpy", &gmic_image_py::to_ndarray<nb::numpy>,
-                    nb::rv_policy::reference_internal,
+                    nb::rv_policy::take_ownership,
                     "Returns a copy of the underlying data as a Numpy NDArray")
                 .def_prop_ro("shape", &gmic_image_py::shape_tuple,
                              "Tuple of dimensions of this image")
                 .def_prop_ro("strides", &gmic_image_py::strides_tuple,
                              "Tuple of strides of this image")
-                .def_prop_ro("width", &gmic_image_py::width,
+                .def_prop_ro("width", &Img::width,
                              "Width (1st dimension) of the image")
-                .def_prop_ro("height", &gmic_image_py::height,
+                .def_prop_ro("height", &Img::height,
                              "Height (2nd dimension) of the image")
-                .def_prop_ro("depth", &gmic_image_py::depth,
+                .def_prop_ro("depth", &Img::depth,
                              "Depth (3rd dimension) of the image")
                 .def_prop_ro(
-                    "spectrum", &gmic_image_py::spectrum,
+                    "spectrum", &Img::spectrum,
                     "Spectrum (i.e. channels, 4th dimension) of the image")
                 .def("__str__", &gmic_image_py::str)
                 .def("__repr__", &gmic_image_py::str);
         char doc_buf[1024];
 #define ARGS(...) __VA_ARGS__
 #define IMAGE_ASSIGN(doc, TYPES, ...)                                         \
-    cls.def(nb::init<TYPES>(),                                                \
+    cls.def("__init__",                                                       \
+            static_cast<void (*)(Img *, TYPES)>(&gmic_image_py::new_image),   \
             Trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>"),          \
             ##__VA_ARGS__)                                                    \
         .def("assign",                                                        \
-             static_cast<gmic_image_py &(gmic_image_py::*)(TYPES)>(           \
-                 &gmic_image_py::py_assign),                                  \
+             static_cast<Img &(*)(Img &, TYPES)>(&gmic_image_py::assign),     \
              Trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>::assign"), \
              nb::rv_policy::none, ##__VA_ARGS__)
         // Bindings for CImg constructors and assign()'s
-        IMAGE_ASSIGN("Construct an empty image", ARGS());
-        IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &), "other"_a);
-        IMAGE_ASSIGN("Advanced copy constructor", ARGS(gmic_image_py &, bool),
-                     "other"_a, "is_shared"_a);
+        cls.def(nb::init<>(),
+                Trans::assign_signature<>(doc_buf, "Construct an empty image",
+                                          "CImg<T>"))
+            .def("assign",
+                 static_cast<Img &(*)(Img &)>(&gmic_image_py::assign),
+                 Trans::assign_signature<>(doc_buf, "Construct an empty image",
+                                           "CImg<T>::assign"),
+                 nb::rv_policy::none);
+
+        IMAGE_ASSIGN("Construct image copy", ARGS(Img &), "other"_a);
+        IMAGE_ASSIGN("Advanced copy constructor", ARGS(Img &, bool), "other"_a,
+                     "is_shared"_a);
         IMAGE_ASSIGN(
             "Construct image with specified size",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int),
@@ -587,16 +596,15 @@ class gmic_image_py : public CImg<T> {
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value_string"_a,
             "repeat"_a);
         IMAGE_ASSIGN("Construct image from reading an image file",
-                     ARGS(string), "filename"_a);
-        IMAGE_ASSIGN("Construct image copy", ARGS(gmic_image_py &));
+                     ARGS(const char *), "filename"_a);
+        IMAGE_ASSIGN("Construct image copy", ARGS(Img &));
         IMAGE_ASSIGN(
             "Construct image with dimensions borrowed from another image",
-            ARGS(gmic_image_py &, string &), "other"_a, "dimensions"_a);
+            ARGS(Img &, string &), "other"_a, "dimensions"_a);
         IMAGE_ASSIGN(
             "Construct image with dimensions borrowed from another image and "
             "initialize pixel values",
-            ARGS(gmic_image_py &, string &, T &), "other"_a, "dimensions"_a,
-            "value"_a);
+            ARGS(Img &, string &, T &), "other"_a, "dimensions"_a, "value"_a);
 
         // gmic-py specific bindings
         IMAGE_ASSIGN("Construct an image from an ndarray", ARGS(TNDArray<>),
@@ -606,49 +614,51 @@ class gmic_image_py : public CImg<T> {
 };  // namespace gmic_image_py
 
 template <class T>
-class gmic_list_base : public CImgList<T> {
-   public:
-    static constexpr auto CLASSNAME = "ImageList";
-    using Item = gmic_image_py<T> &;
-
+class gmic_list_base {
    protected:
+    CImgList<T> list;
     template <class... Args>
-    explicit gmic_list_base(Args... args) : CImgList<T>(args...)
+    explicit gmic_list_base(Args... args) : list(args...)
     {
     }
 
     virtual ~gmic_list_base() = default;
 
    public:
+    static constexpr auto CLASSNAME = "ImageList";
+    using Item = CImg<T> &;
+
     Item get(unsigned int i)
     {
-        if (i >= this->size())
+        if (i >= list.size())
             throw out_of_range("Out of range or gmic_list_py object");
-        return gmic_image_py<T>::wrap((*this)(i));
+        return list(i);
     }
 
-    void set(unsigned int i, Item item) { (*this)(i).assign(item); }
+    void set(unsigned int i, Item item) { list(i).assign(item); }
 };
 
-template <class T>
-concept Character = std::same_as<T, char> || std::same_as<T, signed char> ||
-                    std::same_as<T, unsigned char> ||
-                    std::same_as<T, wchar_t> || std::same_as<T, char8_t> ||
-                    std::same_as<T, char16_t> || std::same_as<T, char32_t>;
+template <>
+class gmic_list_base<char> {
+   protected:
+    CImgList<char> list;
+    template <class... Args>
+    explicit gmic_list_base(Args... args) : list(args...)
+    {
+    }
 
-template <Character CharT>
-class gmic_list_base<CharT> : public CImgList<char> {
+    virtual ~gmic_list_base() = default;
+
    public:
-    using Item = basic_string<CharT>;
+    using Item = string;
     static constexpr auto CLASSNAME = "StringList";
 
-   public:
-    [[nodiscard]] Item get(const unsigned int i) { return {(*this)(i)}; }
-    [[nodiscard]] Item get(const unsigned int i) const { return {(*this)(i)}; }
+    [[nodiscard]] Item get(const unsigned int i) { return {list(i)}; }
+    [[nodiscard]] Item get(const unsigned int i) const { return {list(i)}; }
 
-    void set(const unsigned int i, Item item)
+    void set(const unsigned int i, Item &item)
     {
-        (*this)(i).assign(CImg<CharT>::string(item.c_str()));
+        list(i).assign(CImg<char>::string(item.c_str()));
     }
 };
 
@@ -656,13 +666,14 @@ template <class T = gmic_pixel_type>
 class gmic_list_py : public gmic_list_base<T> {
    private:
     using Item = gmic_list_base<T>::Item;
+    using Base = gmic_list_base<T>;
 
-   protected:
    public:
-    template <class... Args>
-    explicit gmic_list_py(Args... args) : gmic_list_base<T>(args...)
-    {
-    }
+    using Base::Base;
+
+    ~gmic_list_py() override = default;
+
+    CImgList<T> &list() { return Base::list; }
 
     auto operator[](unsigned int i) { return this->get(i); }
     auto operator[](unsigned int i) const { return this->get(i); }
@@ -690,16 +701,16 @@ class gmic_list_py : public gmic_list_base<T> {
         auto operator*() const { return list[iter]; }
     };
 
-    size_t size() { return this->_width; }
+    size_t size() { return Base::list._width; }
 
-    iterator py_begin() { return iterator(*this); }
+    iterator begin() { return iterator(*this); }
 
-    iterator py_end() { return iterator(*this, size()); }
+    iterator end() { return iterator(*this, size()); }
 
     [[nodiscard]] auto iter()
     {
         return nb::make_iterator(nb::type<gmic_list_py>(), "iterator",
-                                 this->py_begin(), this->py_end());
+                                 this->begin(), this->end());
     }
 
     string str()
@@ -709,12 +720,17 @@ class gmic_list_py : public gmic_list_base<T> {
             << '[';
         bool first = true;
 
-        for (size_t i = 0; i < this->size(); i++) {
+        for (auto item : *this) {
             if (first)
                 first = false;
             else
                 out << ", ";
-            out << (string)(*this)[i];
+            if constexpr (is_same_v<CImg<T>, Item>) {
+                out << item.str();
+            }
+            else {
+                out << item;
+            }
         }
         out << "]>";
 
@@ -728,7 +744,7 @@ class gmic_list_py : public gmic_list_base<T> {
             .def("__len__", &gmic_list_py::size)
             .def("__str__", &gmic_list_py::str)
             .def("__getitem__",
-                 (Item(gmic_list_py::*)(unsigned int)) & gmic_list_py::get,
+                 (Item(gmic_list_py:: *)(unsigned int)) & gmic_list_py::get,
                  "i"_a, nb::rv_policy::reference_internal)
             .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a);
     }
@@ -736,67 +752,71 @@ class gmic_list_py : public gmic_list_base<T> {
 
 using gmic_charlist_py = gmic_list_py<char>;
 
-namespace interpreter_py {
 template <class T = gmic_pixel_type>
-gmic_list_py<T> *run(gmic &gmic, const char *cmd, gmic_list_py<T> *img_list,
-                     gmic_charlist_py *img_names)
-{
-    if (img_list == nullptr)
-        img_list = new gmic_list_py<T>();
+class interpreter_py {
+    static gmic_list_py<T> *run(gmic &gmic, const char *cmd,
+                                gmic_list_py<T> *img_list,
+                                gmic_charlist_py *img_names)
+    {
+        if (img_list == nullptr)
+            img_list = new gmic_list_py<T>();
 
-    gmic_charlist_py _names, *names = &_names;
+        gmic_charlist_py _names, *names = &_names;
 
-    if (img_names)
-        names = img_names;
+        if (img_names)
+            names = img_names;
 
-    try {
-        gmic.run(cmd, *static_cast<CImgList<T> *>(img_list),
-                 *static_cast<CImgList<char> *>(names));
+        try {
+            gmic.run(cmd, img_list->list(), names->list());
+        }
+        catch (gmic_exception &ex) {
+            cerr << ex.what();
+            if (errno)
+                cerr << ": " << strerror(errno);
+            cerr << endl;
+            throw;
+        }
+
+        return img_list;
     }
-    catch (gmic_exception &ex) {
-        cerr << ex.what();
-        if (errno)
-            cerr << ": " << strerror(errno);
-        cerr << endl;
-        throw;
+
+    template <class R, class... Args>
+    static auto make_static_run(R (*)(gmic &gmic,
+                                      Args... args)) -> function<R(Args...)>
+    {
+        static unique_ptr<gmic> inter{};
+        return [&](Args... args) {
+            if (!inter)
+                inter = make_unique<gmic>();
+            return run(*inter, args...);
+        };
     }
 
-    return img_list;
-}
+    static string str(const gmic inst)
+    {
+        stringstream out;
+        out << '<' << nb::type_name(nb::type<gmic>()).c_str() << " object at "
+            << static_cast<const void *>(&inst) << '>';
+        return out.str();
+    }
 
-template <class T = gmic_pixel_type>
-auto static_run(const char *cmd, gmic_list_py<T> *img_list,
-                optional<nb::handle> img_names)
-{
-    static unique_ptr<gmic> inter;
-    if (!inter)
-        inter = make_unique<gmic>();
-    return inter->run(cmd, img_list, img_names);
-}
+   public:
+    constexpr static auto CLASSNAME = "Gmic";
 
-string str(const gmic inst)
-{
-    stringstream out;
-    out << '<' << nb::type_name(nb::type<gmic>()).c_str() << " object at "
-        << static_cast<const void *>(&inst) << '>';
-    return out.str();
-}
+    static void bind(nb::module_ &m)
+    {
+        nb::class_<gmic>(m, CLASSNAME)
+            .def("run", &interpreter_py::run, "cmd"_a,
+                 "img_list"_a = nb::none(), "img_names"_a = nb::none(),
+                 nb::rv_policy::take_ownership)
+            .def("__str__", &interpreter_py::str)
+            .def(nb::init());
 
-constexpr static auto CLASSNAME = "Gmic";
-template <class T = gmic_pixel_type>
-static void bind(nb::module_ &m)
-{
-    nb::class_<gmic>(m, CLASSNAME)
-        .def("run", &interpreter_py::run<T>, "cmd"_a,
-             "img_list"_a = nb::none(), "img_names"_a = nb::none(),
-             nb::rv_policy::take_ownership)
-        .def("__str__", &interpreter_py::str)
-        .def(nb::init());
-    m.def("run", &interpreter_py::static_run<T>, "cmd"_a,
-          "img_list"_a = nb::none(), "img_names"_a = nb::none(),
-          nb::rv_policy::take_ownership);
-}
-}  // namespace interpreter_py
+        m.def("run", make_static_run(&interpreter_py::run), "cmd"_a,
+              "img_list"_a = nb::none(), "img_names"_a = nb::none(),
+              nb::rv_policy::take_ownership);
+    }
+};
 
 NB_MODULE(gmic, m)
 {
@@ -830,7 +850,7 @@ NB_MODULE(gmic, m)
     //    static_assert(Trans::is_translatable<gmic_charlist_py &>::value);
     gmic_charlist_py::bind(m);
 
-    interpreter_py::bind(m);
+    interpreter_py<>::bind(m);
 
     const auto gmic_ex = nb::exception<  // NOLINT(*-throw-keyword-missing)
         gmic_exception>(m, "GmicException");

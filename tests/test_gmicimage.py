@@ -1,10 +1,9 @@
 from typing import Any, List
 
+import gmic
 import numpy as np
 import numpy.testing as nptest
 import pytest
-
-import gmic
 
 
 class AttrMask:
@@ -17,8 +16,14 @@ class AttrMask:
 
     def __getattr__(self, item):
         if item in self.attrs:
-            return self.obj.__getattr__(item)
-        raise AttributeError(obj=self.obj, name=item)
+            return getattr(self.obj, item)
+
+        raise AttributeError(self.obj, item)
+
+    def __dir__(self):
+        d = list(object.__dir__(self))
+        d += self.attrs
+        return d
 
 
 @pytest.fixture
@@ -34,29 +39,34 @@ def img(npdata):
 
 def test_numpy_passthrough(npdata: np.ndarray, img: gmic.GmicImage):
     assert img.shape == npdata.shape
-    imgdata = img.to_ndarray()
+    imgdata = img.as_numpy()
+    assert npdata.shape == imgdata.shape
+    nptest.assert_array_equal(npdata, imgdata)
+    imgdata = img.to_numpy()
     assert npdata.shape == imgdata.shape
     nptest.assert_array_equal(npdata, imgdata)
 
 
 def test_numpy_resize(npdata: np.ndarray):
-    for arr, shp in [(npdata[0], ),
-                (npdata[0, 0]),
-                (npdata[0, 0, 0])]:
+    sh = npdata.shape
+    for arr, shp in [(npdata[0], (sh[1], sh[2], sh[3], 1)),
+                     (npdata[0, 0], (sh[2], sh[3], 1, 1)),
+                     (npdata[0, 0, 0], (sh[3], 1, 1, 1))]:
         img = gmic.GmicImage(arr)
+        assert shp == img.shape
 
 
-def test_array_interface(img: gmic.GmicImage):
+def test_array_interface(npdata: np.ndarray, img: gmic.GmicImage):
     assert isinstance(img.__array_interface__, dict)
+    assert "__array_interface__" in dir(img)
     mask = AttrMask(img, "__array_interface__")
-    arr = img.to_ndarray()
-    arr2 = np.array(mask)
-    nptest.assert_array_equal(arr, arr2)
+    arr = np.array(mask)
+    nptest.assert_array_equal(npdata, arr)
 
 
-def test_dlpack_interface(img: gmic.GmicImage):
-    assert isinstance(img.__dlpack__, dict)
-    mask = AttrMask(img, "__array_interface__")
-    arr = img.to_ndarray()
-    arr2 = np.array(mask)
-    nptest.assert_array_equal(arr, arr2)
+def test_dlpack_interface(npdata: np.ndarray, img: gmic.GmicImage):
+    assert type(img.__dlpack__()).__name__ == "PyCapsule"
+    assert "__dlpack__" in dir(img)
+    assert "__dlpack_device__" in dir(img)
+    arr = np.from_dlpack(img)
+    nptest.assert_array_equal(npdata, arr)
