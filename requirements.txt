@@ -1,5 +1,5 @@
 # Requirements for a local developer environment and for CI building (top and wheel-level)
 build
 scikit_build_core~=0.9
-nanobind~=1.9.2
+nanobind~=2.0.0
 setuptools-scm~=8.0

@@ -40,9 +40,12 @@ def img(npdata):
 def test_numpy_passthrough(npdata: np.ndarray, img: gmic.GmicImage):
     assert img.shape == npdata.shape
     imgdata = img.as_numpy()
+    assert isinstance(imgdata, np.ndarray)
     assert npdata.shape == imgdata.shape
     nptest.assert_array_equal(npdata, imgdata)
+    
     imgdata = img.to_numpy()
+    assert isinstance(imgdata, np.ndarray)
     assert npdata.shape == imgdata.shape
     nptest.assert_array_equal(npdata, imgdata)
 

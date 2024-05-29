@@ -17,6 +17,7 @@ execute_process(
         OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE NB_DIR)
 list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gmic)
 
 # Add the module to compile
 if (NOT SKBUILD_PROJECT_NAME)
@@ -25,10 +26,17 @@ endif ()
 nanobind_add_module(gmic-py "src/gmicpy.cpp")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
-        OUTPUT_NAME "${SKBUILD_PROJECT_NAME}")
+        OUTPUT_NAME "__init__")
+nanobind_add_stub(
+        gmic-py-stub
+        MODULE gmic
+        DEPENDS gmic-py
+        OUTPUT "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/__init__.pyi"
+        PYTHON_PATH $<TARGET_FILE_DIR:gmic-py>
+        MARKER_FILE "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/py.typed"
+)
 
 # Install the module
 if (DEFINED SKBUILD_PLATLIB_DIR)
-    install(TARGETS gmic-py
-            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR})
+    install(DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY} DESTINATION ${SKBUILD_PLATLIB_DIR})
 endif ()

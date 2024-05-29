@@ -40,7 +40,7 @@ jupyter = ["wurlitzer"]
 
 
 [build-system]
-requires = ["scikit-build-core", "nanobind~=1.9.2"]
+requires = ["scikit-build-core", "nanobind~=2.0.0", "setuptools-scm~=8.0"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
@@ -49,6 +49,7 @@ minimum-version = "0.9"
 build-dir = "build"
 
 [tool.scikit-build.cmake]
+args = ["-GNinja"]
 version = ">=3.17"
 build-type = "Release"
 targets = []
