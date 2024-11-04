@@ -27,6 +27,7 @@ nanobind_add_module(gmic-py "src/gmicpy.cpp")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "__init__")
+target_compile_definitions(gmic-py PRIVATE "DEBUG=$<IF:$<CONFIG:Debug>,1,0>")
 nanobind_add_stub(
         gmic-py-stub
         MODULE gmic
@@ -35,6 +36,10 @@ nanobind_add_stub(
         PYTHON_PATH $<TARGET_FILE_DIR:gmic-py>
         MARKER_FILE "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/py.typed"
 )
+get_property(CIMG_COMPILE_DEFS
+        TARGET gmic-py
+        PROPERTY COMPILE_DEFINITIONS)
+message("Cimg compile defs:" ${CIMG_COMPILE_DEFS})
 
 # Install the module
 if (DEFINED SKBUILD_PLATLIB_DIR)

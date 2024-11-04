@@ -68,8 +68,9 @@ def test_array_interface(npdata: np.ndarray, img: gmic.GmicImage):
 
 
 def test_dlpack_interface(npdata: np.ndarray, img: gmic.GmicImage):
-    assert type(img.__dlpack__()).__name__ == "PyCapsule"
     assert "__dlpack__" in dir(img)
     assert "__dlpack_device__" in dir(img)
+    assert type(img.__dlpack__()).__name__ == "PyCapsule"
+    # noinspection PyTypeChecker
     arr = np.from_dlpack(img)
     nptest.assert_array_equal(npdata, arr)
