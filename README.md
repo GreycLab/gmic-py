@@ -1,7 +1,7 @@
 [![G'MIC Logo](https://gmic.eu/img/logo4.jpg)](https://gmic.eu)
 [![Python Logo](https://www.python.org/static/community_logos/python-logo-master-v3-TM-flattened.png)](https://www.python.org)
 
-####            
+####             
 
 #### Python binding for G'MIC - A Full-Featured Open-Source Framework for Image Processing
 
@@ -22,7 +22,7 @@ video-games, image procesing.
 First install the G'MIC Python module in your (virtual) environment.
 
 ```sh
-git clone --recursive https://github.com/GreycLab/gmic-py
+git clone --recursive -b nanobind https://github.com/GreycLab/gmic-py
 cd gmic-py
 pip install .
 ```
