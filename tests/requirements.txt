@@ -5,4 +5,4 @@ matplotlib
 scikit-image
 numpy
 Pillow
-
+matplotlib

@@ -34,10 +34,10 @@ def npdata():
 
 @pytest.fixture
 def img(npdata):
-    return gmic.GmicImage(npdata.copy())
+    return gmic.Image(npdata.copy())
 
 
-def test_numpy_passthrough(npdata: np.ndarray, img: gmic.GmicImage):
+def test_numpy_passthrough(npdata: np.ndarray, img: gmic.Image):
     assert img.shape == npdata.shape
     imgdata = img.as_numpy()
     assert isinstance(imgdata, np.ndarray)
@@ -55,11 +55,11 @@ def test_numpy_resize(npdata: np.ndarray):
     for arr, shp in [(npdata[0], (sh[1], sh[2], sh[3], 1)),
                      (npdata[0, 0], (sh[2], sh[3], 1, 1)),
                      (npdata[0, 0, 0], (sh[3], 1, 1, 1))]:
-        img = gmic.GmicImage(arr)
+        img = gmic.Image(arr)
         assert shp == img.shape
 
 
-def test_array_interface(npdata: np.ndarray, img: gmic.GmicImage):
+def test_array_interface(npdata: np.ndarray, img: gmic.Image):
     assert isinstance(img.__array_interface__, dict)
     assert "__array_interface__" in dir(img)
     mask = AttrMask(img, "__array_interface__")
@@ -67,7 +67,7 @@ def test_array_interface(npdata: np.ndarray, img: gmic.GmicImage):
     nptest.assert_array_equal(npdata, arr)
 
 
-def test_dlpack_interface(npdata: np.ndarray, img: gmic.GmicImage):
+def test_dlpack_interface(npdata: np.ndarray, img: gmic.Image):
     assert "__dlpack__" in dir(img)
     assert "__dlpack_device__" in dir(img)
     assert type(img.__dlpack__()).__name__ == "PyCapsule"

@@ -42,7 +42,7 @@ jupyter = ["wurlitzer"]
 [build-system]
 requires = [
     "scikit-build-core",
-    "nanobind~=2.0.0",
+    "nanobind~=2.5.0",
     "setuptools-scm~=8.0",
     'typing_extensions ; python_version<"3.11"'
 ]

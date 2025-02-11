@@ -25,21 +25,47 @@ static const char *const DLPACK_INTERFACE = "__dlpack__";
 static const char *const DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
 
 /// Debug function
-void inspect(nb::ndarray<gmic_pixel_type, nb::device::cpu> a)
+string inspect(const nb::ndarray<nb::ro> &a)
 {
-    printf("Array data pointer : %p\n", a.data());
-    printf("Array dimension : %zu\n", a.ndim());
+    stringstream buf;
+    buf << "Array :\n\tdata pointer : " << a.data() << endl;
+    buf << "\tdimensions : " << a.ndim() << endl;
     for (size_t i = 0; i < a.ndim(); ++i) {
-        printf("Array dimension [%zu] : %zu\n", i, a.shape(i));
-        printf("Array stride    [%zu] : %zd\n", i, a.stride(i));
+        buf << "\t\t[" << i << "]: size=" << a.shape(i)
+            << ", stride=" << a.stride(i) << endl;
     }
-    printf("Device ID = %u (cpu=%i, cuda=%i)\n", a.device_id(),
-           int(a.device_type() == nb::device::cpu::value),
-           int(a.device_type() == nb::device::cuda::value));
-    printf("Array dtype: int16=%i, uint32=%i, float32=%i\n",
-           a.dtype() == nb::dtype<int16_t>(),
-           a.dtype() == nb::dtype<uint32_t>(),
-           a.dtype() == nb::dtype<float>());
+
+    buf << "\tdevice = " << a.device_id() << "(";
+    if (a.device_type() == nb::device::cpu::value) {
+        buf << "CPU)" << endl;
+    }
+    else if (a.device_type() == nb::device::cuda::value) {
+        buf << "CUDA)" << endl;
+    }
+    else {
+        buf << "<unknown>)" << endl;
+    }
+    buf << "\tdtype: ";
+    auto dtypes = {make_pair(nb::dtype<int8_t>(), "int8_t"),
+                   make_pair(nb::dtype<int16_t>(), "int16_t"),
+                   make_pair(nb::dtype<int32_t>(), "int32_t"),
+                   make_pair(nb::dtype<int64_t>(), "int64_t"),
+                   make_pair(nb::dtype<uint8_t>(), "uint8_t"),
+                   make_pair(nb::dtype<uint16_t>(), "uint16_t"),
+                   make_pair(nb::dtype<uint32_t>(), "uint32_t"),
+                   make_pair(nb::dtype<uint64_t>(), "uint64_t"),
+                   make_pair(nb::dtype<float>(), "float"),
+                   make_pair(nb::dtype<double>(), "double"),
+                   make_pair(nb::dtype<bool>(), "bool")};
+    auto dt = find_if(dtypes.begin(), dtypes.end(),
+                      [&](auto pair) { return pair.first == a.dtype(); });
+    if (dt != dtypes.end()) {
+        buf << dt->second << endl;
+    }
+    else {
+        buf << "<unknown>" << endl;
+    }
+    return buf.str();
 }
 
 /**
@@ -314,10 +340,12 @@ template <class T = gmic_pixel_type>
 class gmic_image_py {
    public:
     using Img = CImg<T>;
+    /// ndarray of type T on the CPU
     template <class... P>
     using TNDArray = nb::ndarray<T, nb::device::cpu, P...>;
+    /// read-only ndarray of type T on the CPU
     template <class... P>
-    using T4DArray = TNDArray<nb::ndim<4>, P...>;
+    using CTNDArray = nb::ndarray<const T, nb::device::cpu, P...>;
 
     /**
      * Copies a ndarray. Will reorder the data so that the data is
@@ -329,9 +357,10 @@ class gmic_image_py {
      * coordinates, but reordered C-style
      */
     template <class... P>
-    static TNDArray<P...> copy_ndarray(TNDArray<P...> array)
+    static TNDArray<P...> copy_ndarray(const CTNDArray<P...> &array)
     {
-        T *src = array.data(), *dest = new T[array.size()];
+        const T *src = array.data();
+        T *dest = new T[array.size()];
         nb::capsule owner(dest, [](void *p) noexcept { delete[] (float *)p; });
         int64_t strides_src[4]{0, 0, 0, 0}, strides_dst[4]{0, 0, 0, 0};
         size_t shape[4]{1, 1, 1, 1};
@@ -362,7 +391,7 @@ class gmic_image_py {
         return TNDArray<P...>(dest, array.ndim(), shape, owner);
     }
 
-    constexpr static auto CLASSNAME = "GmicImage";
+    constexpr static auto CLASSNAME = "Image";
 
     template <class I, class... Args>
     struct can_native_init : false_type {};
@@ -398,7 +427,7 @@ class gmic_image_py {
     }
 
     template <class... P>
-    static Img &assign(Img &img, TNDArray<P...> arr)
+    static Img &assign(Img &img, CTNDArray<P...> arr)
     {
         if (arr.ndim() == 0 || arr.ndim() > 4) {
             throw nb::value_error(
@@ -415,7 +444,7 @@ class gmic_image_py {
     }
 
     template <class... P>
-    static Img &assign(Img &img, TNDArray<P...> &arr,
+    static Img &assign(Img &img, CTNDArray<P...> &arr,
                        const array<size_t, 4> &shape,
                        const array<size_t, 4> &strides)
     {
@@ -449,18 +478,18 @@ class gmic_image_py {
         return img;
     }
 
-    template <class... P>
-    static T4DArray<P...> as_ndarray(Img &img)
+    template <class Tp = T, class... P>
+    static auto as_ndarray(Img &img)
     {
-        return T4DArray<P...>(
+        return CTNDArray<Tp, nb::ndim<4>, P...>(
             img.data(), {img._spectrum, img._depth, img._height, img._width},
             nb::handle());
     }
 
     template <class... P>
-    static T4DArray<P...> to_ndarray(Img &img)
+    static auto to_ndarray(Img &img)
     {
-        return copy_ndarray(as_ndarray<P...>(img));
+        return copy_ndarray(as_ndarray<const T, P...>(img));
     }
 
     static auto dlpack_device(Img &)
@@ -599,7 +628,7 @@ class gmic_image_py {
         // gmic-py specific bindings
         IMAGE_ASSIGN("assign_ndarray",
                      "Construct an image from an array-like object",
-                     ARGS(TNDArray<>), "array"_a);
+                     ARGS(CTNDArray<>), "array"_a);
     }
 #undef IMAGE_ASSIGN
 #undef ARGS
@@ -825,7 +854,7 @@ NB_MODULE(gmic, m)
     (strcmp(#macro, Py_STRINGIFY(macro)) != 0 ? #macro \
          "=" Py_STRINGIFY(macro)                       \
                                               : #macro "=N/A")
-        
+
         static char build[256];
         stringstream build_str;
         build_str << "Built on " __DATE__ << " at " << __TIME__;
@@ -864,13 +893,10 @@ NB_MODULE(gmic, m)
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");
 #endif
 
-    //    static_assert(Trans::is_translatable<gmic_image_py<> &>::value);
     gmic_image_py<>::bind(m);
 
-    //    static_assert(Trans::is_translatable<gmic_list_py<> &>::value);
     gmic_list_py<>::bind(m);
 
-    //    static_assert(Trans::is_translatable<gmic_charlist_py &>::value);
     gmic_charlist_py::bind(m);
 
     interpreter_py<>::bind(m);
