@@ -4,6 +4,15 @@ project(gmic-py LANGUAGES C CXX)
 find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using python executable: ${Python_EXECUTABLE}")
 
+option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." FALSE)
+if (${FORCE_COLORED_OUTPUT})
+    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+        add_compile_options(-fdiagnostics-color=always)
+    elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+        add_compile_options(-fcolor-diagnostics)
+    endif ()
+endif ()
+
 add_subdirectory("lib/gmic" EXCLUDE_FROM_ALL)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
