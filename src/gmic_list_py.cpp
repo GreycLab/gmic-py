@@ -23,7 +23,19 @@ class gmic_list_base {
         return list(i);
     }
 
-    void set(unsigned int i, Item item) { list(i).assign(item); }
+    void set(unsigned int i, const CImg<T> &item)
+    {
+        if (i >= list.size())
+            throw out_of_range("Out of range or gmic_list_py object");
+        list(i).assign(item);
+    }
+
+    void move_set(unsigned int i, CImg<T> &&item)
+    {
+        if (i >= list.size())
+            throw out_of_range("Out of range or gmic_list_py object");
+        item.move_to(list(i));
+    }
 };
 
 template <>
@@ -41,21 +53,58 @@ class gmic_list_base<char> {
     using Item = string;
     static constexpr auto CLASSNAME = "StringList";
 
-    [[nodiscard]] Item get(const unsigned int i) const { return {list(i)}; }
+    [[nodiscard]] Item get(const unsigned int i) const
+    {
+        if (i >= list.size())
+            throw out_of_range("Out of range or gmic_list_py object");
+        return {list(i)};
+    }
 
     void set(const unsigned int i, const Item &item)
     {
+        if (i >= list.size())
+            throw out_of_range("Out of range or gmic_list_py object");
         list(i).assign(CImg<char>::string(item.c_str()));
     }
+
+    void move_set(unsigned int i, Item &&item) { set(i, item); }
 };
 
 template <class T = gmic_pixel_type>
 class gmic_list_py : public gmic_list_base<T> {
-    using Item = typename gmic_list_base<T>::Item;
     using Base = gmic_list_base<T>;
+    using Item = typename Base::Item;
+    using RawItem = remove_reference_t<Item>;
 
    public:
-    using Base::Base;
+    gmic_list_py() : Base() {}
+
+    explicit gmic_list_py(const nb::sequence &seq) : Base(len(seq))
+    {
+        const size_t N = size();
+        size_t i = 0;
+        vector<RawItem> imgs(N, RawItem{});
+        // First check that the sequence contains only images or compatible
+        for (const auto &img : seq) {
+            if (i >= size())
+                throw invalid_argument(
+                    "Sequence contains more items than expected");
+            if (!nb::try_cast(img, imgs[i++], true))
+                throw nb::type_error(
+                    "Sequence contains object(s) that isn't and cannot be "
+                    "made into a gmic Image");
+        }
+        if (i < N)
+            throw invalid_argument(
+                "Sequence contains less items than expected");
+
+        i = 0;
+        for (auto it = make_move_iterator(imgs.begin());
+             it != make_move_iterator(imgs.end()); ++it) {
+            // for (i = 0; i < N; i++) {
+            Base::move_set(i++, *it);
+        }
+    }
 
     ~gmic_list_py() override = default;
 
@@ -64,8 +113,7 @@ class gmic_list_py : public gmic_list_base<T> {
     auto operator[](unsigned int i) { return this->get(i); }
     auto operator[](unsigned int i) const { return this->get(i); }
 
-    class iterator
-        : std::iterator<std::forward_iterator_tag, remove_reference_t<Item>> {
+    class iterator : std::iterator<std::forward_iterator_tag, RawItem> {
         gmic_list_py &list;
         unsigned int iter = 0;
 
@@ -129,9 +177,12 @@ class gmic_list_py : public gmic_list_base<T> {
             .def("__iter__", &gmic_list_py::iter)
             .def("__len__", &gmic_list_py::size)
             .def("__str__", &gmic_list_py::str)
+            .def("__repr__", &gmic_list_py::str)
             .def("__getitem__", &gmic_list_py::get, "i"_a,
                  nb::rv_policy::reference_internal)
-            .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a);
+            .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a)
+            .def(nb::init())
+            .def(nb::init<nb::sequence>());
     }
 };
 
