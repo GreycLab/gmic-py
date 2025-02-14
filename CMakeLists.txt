@@ -32,7 +32,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gmic)
 if (NOT SKBUILD_PROJECT_NAME)
     set(SKBUILD_PROJECT_NAME gmic)
 endif ()
-nanobind_add_module(gmic-py "src/gmicpy.cpp")
+nanobind_add_module(gmic-py "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src/translate_args.h")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "__init__")

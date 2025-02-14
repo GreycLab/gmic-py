@@ -174,15 +174,15 @@ class gmic_list_py : public gmic_list_base<T> {
     static void bind(nb::module_ &m)
     {
         nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSNAME)
+            .def(nb::init())
+            .def(nb::init_implicit<nb::sequence>())
             .def("__iter__", &gmic_list_py::iter)
             .def("__len__", &gmic_list_py::size)
             .def("__str__", &gmic_list_py::str)
             .def("__repr__", &gmic_list_py::str)
             .def("__getitem__", &gmic_list_py::get, "i"_a,
                  nb::rv_policy::reference_internal)
-            .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a)
-            .def(nb::init())
-            .def(nb::init<nb::sequence>());
+            .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a);
     }
 };
 

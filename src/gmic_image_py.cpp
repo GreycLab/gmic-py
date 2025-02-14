@@ -80,6 +80,7 @@ class gmic_image_py {
     static void new_image(Img *img, Args... args)
     {
         if constexpr (can_native_init<Img, Args...>::value) {
+            LOG_DEBUG();
             new (img) Img(trans::translate<Args>(args)...);
         }
         else {
@@ -94,6 +95,7 @@ class gmic_image_py {
                            declval<trans::translated<Args>>()...))>,
                        Img &>
     {
+        LOG_DEBUG();
         img.assign(trans::translate<Args>(args)...);
         return img;
     }
@@ -101,6 +103,7 @@ class gmic_image_py {
     template <class... P>
     static Img &assign(Img &img, CTNDArray<P...> arr)
     {
+        LOG_DEBUG();
         if (arr.ndim() == 0 || arr.ndim() > 4) {
             throw nb::value_error(
                 "Invalid ndarray dimensions for image "
@@ -121,10 +124,14 @@ class gmic_image_py {
                        const array<size_t, 4> &strides)
     {
         img.assign(shape[3], shape[2], shape[1], shape[0]);
+        LOG_DEBUG("Copying data from " << arr.data());
+
         if (is_c_contig(arr)) {
+            LOG << ", C-contig (std::copy_n)" << endl;
             copy_n(arr.data(), arr.size(), img.data());
         }
         else {
+            LOG << ", Non-C-contig (loop)" << endl;
             for (size_t c = 0; c < shape[0]; c++) {
                 const size_t offc = c * strides[0];
                 for (size_t d = 0; d < shape[1]; d++) {
@@ -132,7 +139,8 @@ class gmic_image_py {
                     for (size_t y = 0; y < shape[2]; y++) {
                         const size_t offy = offd + y * strides[2];
                         for (size_t x = 0; x < shape[3]; x++) {
-                            img(x, y, d, c) = offy + x * strides[3];
+                            img(x, y, d, c) =
+                                arr.data()[offy + x * strides[3]];
                         }
                     }
                 }
@@ -261,13 +269,14 @@ class gmic_image_py {
 
         // Bindings for CImg constructors and assign()'s
 #define ARGS(...) __VA_ARGS__
-#define IMAGE_ASSIGN(funcname, doc, TYPES, ...)                               \
-    cls.def("__init__",                                                       \
-            static_cast<new_image_t<TYPES>>(&gmic_image_py::new_image),       \
-            trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>"),          \
-            ##__VA_ARGS__)                                                    \
-        .def(funcname, static_cast<assign_t<TYPES>>(&gmic_image_py::assign),  \
-             trans::assign_signature<TYPES>(doc_buf, doc, "CImg<T>::assign"), \
+#define IMAGE_ASSIGN(funcname, doc, TYPES, ...)                              \
+    cls.def("__init__",                                                      \
+            static_cast<new_image_t<TYPES>>(&gmic_image_py::new_image),      \
+            trans::assign_signature_doc<TYPES>(doc_buf, doc, "CImg<T>"),     \
+            ##__VA_ARGS__)                                                   \
+        .def(funcname, static_cast<assign_t<TYPES>>(&gmic_image_py::assign), \
+             trans::assign_signature_doc<TYPES>(doc_buf, doc,                \
+                                                "CImg<T>::assign"),          \
              nb::rv_policy::none, ##__VA_ARGS__)
         char doc_buf[1024];
 

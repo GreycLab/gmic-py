@@ -3,13 +3,32 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <source_location>
 #include <sstream>
+
+#include "logging.h"
 
 namespace gmicpy {
 namespace nb = nanobind;
 using namespace nanobind::literals;
 using namespace std;
 using namespace cimg_library;
+
+using Level = DebugLogger::Level;
+static DebugLogger LOG;
+#define LOG_VA_ELSE(arg, ...) arg
+#define LOG_(level, ...)                                                      \
+    {                                                                         \
+        static constexpr function_name_stripped<strlen(                       \
+            source_location::current().function_name())>                      \
+            fname(source_location::current().function_name());                \
+        LOG << level                                                          \
+            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< "\n\t" << __VA_ARGS__, ) \
+                                       << std::endl);                         \
+    }
+#define LOG_INFO(...) LOG_(Level::Info __VA_OPT__(, __VA_ARGS__))
+#define LOG_DEBUG(...) LOG_(Level::Debug __VA_OPT__(, __VA_ARGS__))
+#define LOG_TRACE(...) LOG_(Level::Trace __VA_OPT__(, __VA_ARGS__))
 
 /// Debug function
 string inspect(const nb::ndarray<nb::ro> &a)
@@ -116,7 +135,7 @@ class interpreter_py {
         };
     }
 
-    static string str(const gmic inst)
+    static string str(const gmic &inst)
     {
         stringstream out;
         out << '<' << nb::type_name(nb::type<gmic>()).c_str() << " object at "
@@ -144,6 +163,14 @@ class interpreter_py {
 
 NB_MODULE(gmic, m)
 try {
+#if DEBUG == 1
+    LOG = DebugLogger{&cerr, Level::Nothing};
+    if (auto loglevel = getenv("GMICPY_LOGLEVEL")) {
+        auto lvl = atoi(loglevel);
+        LOG.set_log_level(lvl);
+        LOG_INFO("Setting log level to " << lvl);
+    }
+#endif
     {
         static char version[16];
         constexpr auto patch = gmic_version % 10,
@@ -194,16 +221,24 @@ try {
 
 #if DEBUG == 1
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");
+    m.def(
+        "set_debug", [](const int lvl) { LOG.set_log_level(lvl); }, "level"_a,
+        "Sets the debug log level (1=info, 2=debug, 3=trace)");
 #endif
 
+    LOG_TRACE("Binding gmic.Image class" << endl);
     gmic_image_py<>::bind(m);
 
+    LOG_TRACE("Binding gmic.ImageList class" << endl);
     gmic_list_py<>::bind(m);
 
+    LOG_TRACE("Binding gmic.StringList class" << endl);
     gmic_charlist_py::bind(m);
 
+    LOG_TRACE("Binding gmic.Gmic class" << endl);
     interpreter_py<>::bind(m);
 
+    LOG_TRACE("Binding gmic.GmicException class" << endl);
     const auto gmic_ex = nb::exception<  // NOLINT(*-throw-keyword-missing)
         gmic_exception>(m, "GmicException");
 }

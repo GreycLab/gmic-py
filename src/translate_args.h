@@ -1,6 +1,10 @@
 #ifndef TRANSLATE_ARGS_H
 #define TRANSLATE_ARGS_H
 
+#ifdef __GNUC__
+#include <cxxabi.h>
+#endif
+
 namespace gmicpy::trans {
 /**
  * Class that manages the translation of values back and forth between the
@@ -45,7 +49,7 @@ static auto get_void_p(A val)
  */
 /// gmic_image_py&lt;T&gt; -> CImg&lt;T&gt; unwrapping
 template <class gmic_image_py_t>
-[[maybe_unused]] static inline auto substitute(gmic_image_py_t img)
+[[maybe_unused]] static auto substitute(gmic_image_py_t img)
     -> decltype(img.get_image())
 {
     return img.get_image();
@@ -53,7 +57,7 @@ template <class gmic_image_py_t>
 
 /// gmic_list_py&lt;T&gt -> CImgList&lt;T&gt unwrapping
 template <class gmic_list_py_t>
-[[maybe_unused]] static inline auto substitute(gmic_list_py_t list)
+[[maybe_unused]] static auto substitute(gmic_list_py_t list)
     -> decltype(list.get_list())
 {
     return list.get_list();
@@ -61,7 +65,7 @@ template <class gmic_list_py_t>
 
 /// std::string&lt;char_t&gt; -> const char_t* unwrapping
 template <class string_t>
-[[maybe_unused]] static inline auto substitute(
+[[maybe_unused]] static auto substitute(
     string_t str)  // NOLINT(*-unnecessary-value-param)
     -> decltype(str.c_str())
 {
@@ -71,7 +75,7 @@ template <class string_t>
 /// CImg&lt;T&gt -> gmic_image_py&lt;T&gt wrapping
 template <class A,
           enable_if_t<is_same_v<A, CImg<typename A::value_type>>, bool> = true>
-[[maybe_unused]] static inline auto unsubstitute(A img)
+[[maybe_unused]] static auto unsubstitute(A img)
 {
     return gmic_image_py<typename A::value_type>(img);
 }
@@ -79,7 +83,7 @@ template <class A,
 /// CImg&lt;T&gt& -> gmic_image_py&lt;T&gt& wrapping (registry-only)
 template <class A, enable_if_t<is_same_v<A, CImg<typename A::value_type> &>,
                                bool> = true>
-[[maybe_unused]] [[noreturn]] static inline auto unsubstitute(A &)
+[[maybe_unused]] [[noreturn]] static auto unsubstitute(A &)
 {
     throw runtime_error("Cannot untranslate a CImg<T> reference");
 }
@@ -87,7 +91,7 @@ template <class A, enable_if_t<is_same_v<A, CImg<typename A::value_type> &>,
 /// CImgList&lt;T&gt& -> gmic_list_py&lt;T&gt& wrapping
 template <class A, enable_if_t<is_same_v<A, CImgList<typename A::value_type>>,
                                bool> = true>
-[[maybe_unused]] static inline auto unsubstitute(A list)
+[[maybe_unused]] static auto unsubstitute(A list)
 {
     return gmic_list_py<typename A::value_type>(list);
 }
@@ -96,7 +100,7 @@ template <class A, enable_if_t<is_same_v<A, CImgList<typename A::value_type>>,
 template <
     class A,
     enable_if_t<is_same_v<A, CImgList<typename A::value_type> &>, bool> = true>
-[[maybe_unused]] static inline auto unsubstitute(A &)
+[[maybe_unused]] static auto unsubstitute(A &)
 {
     throw runtime_error("Cannot untranslate a CImgList<T> reference");
 }
@@ -174,7 +178,7 @@ static translated<A> translate(A a, registry *reg = nullptr)
                       "Translated value is not translate-stable");
         if constexpr ((is_lvalue_reference_v<A> || is_pointer_v<A>) &&
                       (is_lvalue_reference_v<B> || is_pointer_v<B>)) {
-            if (reg && (void *)&a != (void *)&b) {
+            if (reg && static_cast<void *>(&a) != static_cast<void *>(&b)) {
                 reg->emplace(get_void_p<B>(b),
                              make_pair(get_void_p<A>(a), &typeid(A)));
             }
@@ -221,6 +225,56 @@ template <class A>
     }
 }
 
+template <class... Args>
+struct assign_signature {
+    const char *const func_name;
+    vector<string> arg_names{};
+
+    explicit assign_signature(const char *func_name) : func_name(func_name)
+    {
+#ifdef __GNUC__
+        int status;
+        unsigned long bufsize = 128;
+        char *buf = static_cast<char *>(malloc(sizeof(char) * bufsize));
+        const char *names[] = {typeid(translated<Args>).name()...};
+        for (const char *name : names) {
+            char *demang = abi::__cxa_demangle(name, buf, &bufsize, &status);
+            if (demang == nullptr)
+                throw std::runtime_error("Could not demangle function name");
+            arg_names.emplace_back(demang);
+            buf = demang;
+        }
+        free(buf);
+#else
+        arg_names = {typeid(translated<Args>).name()...};
+#endif
+    }
+
+    const vector<string> &get_arg_names() { return arg_names; }
+};
+
+template <class... Args>
+ostream &operator<<(ostream &out, assign_signature<Args...> sig)
+{
+    out << sig.func_name << "(";
+    // buf += snprintf(buf, N, "%s\n\nBinds %s(", doc, func);
+    const auto argtypes = sig.get_arg_names();
+    bool first = true;
+    for (const auto &t : argtypes) {
+        if (first) {
+            first = false;
+            // buf += snprintf(buf, max - buf, "%s", t);
+        }
+        else {
+            out << ", ";
+            // buf += snprintf(buf, max - buf, ", %s", t);
+        }
+        out << t;
+    }
+    out << ')';
+    return out;
+}
+
 /**
  * Appends the signature of a given function, with its arguments' types
  * translated, to a given docstring, and writes it to a char buffer
@@ -232,24 +286,15 @@ template <class A>
  * @return buf passthrough
  */
 template <class... Args, size_t N = 1024>
-static const char *assign_signature(char buf[N], const char *doc,
-                                    const char *func)
+static const char *assign_signature_doc(char buf[N], const char *doc,
+                                        const char *func)
 {
-    const char *max = buf + N;
-    buf += snprintf(buf, N, "%s\n\nBinds %s(", doc, func);
-    const vector<const char *> argtypes{typeid(translated<Args>).name()...};
-    bool first = true;
-    for (const auto &t : argtypes) {
-        if (first) {
-            first = false;
-            buf += snprintf(buf, max - buf, "%s", t);
-        }
-        else
-            buf += snprintf(buf, max - buf, ", %s", t);
-    }
-    buf += snprintf(buf, max - buf, ")");
-    if (buf == max)
-        throw runtime_error("Ran out of char buffer");
+    stringstream out;
+    out.rdbuf()->pubsetbuf(buf, N);
+    out << doc << "\n\n" << "Binds " << assign_signature<Args...>(func);
+    if (out.tellp() >= N)
+        throw out_of_range("Function signature is too long for buffer");
+    buf[out.tellp()] = '\0';
     return buf;
 }
 
