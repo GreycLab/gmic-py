@@ -295,7 +295,7 @@ class gmic_image_py {
             "Construct image with specified size and initialize pixel "
             "values from a value string",
             ARGS(unsigned int, unsigned int, unsigned int, unsigned int,
-                 string &, bool),
+                 const char *, bool),
             "width"_a, "height"_a, "depth"_a, "channels"_a, "value_string"_a,
             "repeat"_a);
         IMAGE_ASSIGN("assign_load_file",
@@ -304,7 +304,7 @@ class gmic_image_py {
         IMAGE_ASSIGN(
             "assign_copy_dims",
             "Construct image with dimensions borrowed from another image",
-            ARGS(Img &, string &), "other"_a, "dimensions"_a);
+            ARGS(Img &, const char *), "other"_a, "dimensions"_a);
 
         // gmic-py specific bindings
         IMAGE_ASSIGN("assign_ndarray",
