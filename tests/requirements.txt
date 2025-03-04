@@ -1,8 +1,4 @@
 pytest
-ipython
-ipykernel
-matplotlib
 scikit-image
 numpy
 Pillow
-matplotlib

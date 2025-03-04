@@ -5,9 +5,11 @@ template <class T>
 class gmic_list_base {
    protected:
     CImgList<T> list{};
+
     template <class... Args>
     explicit gmic_list_base(Args... args) : list(args...)
     {
+        LOG_DEBUG("Data is at: " << list._data << endl);
     }
 
     virtual ~gmic_list_base() = default;
@@ -45,6 +47,7 @@ class gmic_list_base<char> {
     template <class... Args>
     explicit gmic_list_base(Args... args) : list(args...)
     {
+        LOG_DEBUG("Data is at: " << list._data << endl);
     }
 
     virtual ~gmic_list_base() = default;
@@ -101,12 +104,14 @@ class gmic_list_py : public gmic_list_base<T> {
         i = 0;
         for (auto it = make_move_iterator(imgs.begin());
              it != make_move_iterator(imgs.end()); ++it) {
-            // for (i = 0; i < N; i++) {
             Base::move_set(i++, *it);
         }
     }
 
-    ~gmic_list_py() override = default;
+    ~gmic_list_py() override
+    {
+        LOG_DEBUG("Size: " << size() << ", data at: " << list()._data << endl);
+    };
 
     CImgList<T> &list() { return Base::list; }
 
@@ -159,8 +164,8 @@ class gmic_list_py : public gmic_list_base<T> {
                 first = false;
             else
                 out << ", ";
-            if constexpr (is_same_v<CImg<T>, Item>) {
-                out << item.str();
+            if constexpr (is_same_v<CImg<T> &, Item>) {
+                out << gmic_image_py<T>::str(item);
             }
             else {
                 out << item;

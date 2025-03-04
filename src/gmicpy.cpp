@@ -1,10 +1,13 @@
 #include "gmicpy.h"
 
+#include <bit>
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <ranges>
 #include <source_location>
 #include <sstream>
+#include <type_traits>
 
 #include "logging.h"
 
@@ -17,14 +20,14 @@ using namespace cimg_library;
 using Level = DebugLogger::Level;
 static DebugLogger LOG;
 #define LOG_VA_ELSE(arg, ...) arg
-#define LOG_(level, ...)                                                      \
-    {                                                                         \
-        static constexpr function_name_stripped<strlen(                       \
-            source_location::current().function_name())>                      \
-            fname(source_location::current().function_name());                \
-        LOG << level                                                          \
-            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< "\n\t" << __VA_ARGS__, ) \
-                                       << std::endl);                         \
+#define LOG_(level, ...)                                                    \
+    {                                                                       \
+        static constexpr function_name_stripped<strlen(                     \
+            source_location::current().function_name())>                    \
+            fname(source_location::current().function_name());              \
+        LOG << level                                                        \
+            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< ": " << __VA_ARGS__, ) \
+                                       << std::endl);                       \
     }
 #define LOG_INFO(...) LOG_(Level::Info __VA_OPT__(, __VA_ARGS__))
 #define LOG_DEBUG(...) LOG_(Level::Debug __VA_OPT__(, __VA_ARGS__))
@@ -74,11 +77,39 @@ string inspect(const nb::ndarray<nb::ro> &a)
     return buf.str();
 }
 
+template <ranges::sized_range V>
+nb::tuple to_tuple(V v, nb::rv_policy rv = nb::rv_policy::automatic)
+{
+    const size_t size = v.size();
+    auto result =
+        nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
+    size_t i = 0;
+    for (const auto &e : v) {
+        PyTuple_SET_ITEM(result.ptr(), i++, nb::cast(e, rv).ptr());
+    }
+
+    return result;
+}
+
+template <class F, integral I, class V = decltype(declval<F>()(declval<I>()))>
+    requires std::is_invocable_r_v<V, F, I>
+nb::tuple to_tuple_func(I size, F get,
+                        nb::rv_policy rv = nb::rv_policy::automatic)
+{
+    auto result =
+        nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
+    for (I i = 0; i < size; ++i) {
+        PyTuple_SET_ITEM(result.ptr(), i, nb::cast(get(i), rv).ptr());
+    }
+
+    return result;
+}
+
 template <class Sh, class St>
-bool is_c_contig(unsigned short ndim, Sh *shape, St *strides)
+bool is_f_contig(unsigned short ndim, Sh *shape, St *strides)
 {
     decltype(*shape * *strides) acc = 1;
-    for (int i = ndim - 1; i >= 0; --i) {
+    for (int i = 0; i < ndim; ++i) {
         if (strides[i] != acc)
             return false;
         acc *= shape[i];
@@ -87,9 +118,9 @@ bool is_c_contig(unsigned short ndim, Sh *shape, St *strides)
 }
 
 template <class... P>
-bool is_c_contig(nb::ndarray<P...> arr)  // NOLINT(*-unnecessary-value-param)
+bool is_f_contig(nb::ndarray<P...> arr)  // NOLINT(*-unnecessary-value-param)
 {
-    return is_c_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
+    return is_f_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
 }
 
 #include "gmic_image_py.cpp"  // NOLINT(*-suspicious-include)

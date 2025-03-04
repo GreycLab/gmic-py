@@ -1,5 +1,6 @@
 from typing import Any, List
 
+import PIL.Image
 import gmic
 import numpy as np
 import numpy.testing as nptest
@@ -27,14 +28,19 @@ class AttrMask:
 
 
 @pytest.fixture
-def npdata():
+def npdata() -> np.ndarray:
     npshape = (2, 3, 4, 5)
     return np.arange(np.prod(npshape)).reshape(npshape)
 
 
 @pytest.fixture
-def img(npdata):
+def img(npdata) -> gmic.Image:
     return gmic.Image(npdata.copy())
+
+
+def pil_img() -> PIL.Image:
+    npshape = (4, 5, 3)
+    return PIL.Image.fromarray(np.arange(np.prod(npshape), dtype=np.uint8).reshape(npshape), "RGB")
 
 
 def test_numpy_passthrough(npdata: np.ndarray, img: gmic.Image):
@@ -74,3 +80,7 @@ def test_dlpack_interface(npdata: np.ndarray, img: gmic.Image):
     # noinspection PyTypeChecker
     arr = np.from_dlpack(img)
     nptest.assert_array_equal(npdata, arr)
+
+#
+# def test_operators(npdata: np.ndarray, img: gmic.Image):
+#     nptest.assert_array_equal()
