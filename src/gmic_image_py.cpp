@@ -171,8 +171,8 @@ class gmic_image_py {
     {
         auto shape_v = shape<size_t, array<size_t, 4>>(img);
         auto strides_v = strides<int64_t, false, array<int64_t, 4>>(img);
-        return CTNDArray<Tp, nb::ndim<4>, P...>(
-            img.data(), 4, shape_v.data(), nb::handle(), strides_v.data());
+        return TNDArray<Tp, nb::ndim<4>, P...>(img.data(), 4, shape_v.data(),
+                                               nb::handle(), strides_v.data());
     }
 
     static auto dlpack_device(Img &)
@@ -381,10 +381,10 @@ class gmic_image_py {
                      nb::rv_policy::copy,
                      "Returns a copy of the underlying data as a"
                      " DLPack capsule")
-                .def(
-                    "as_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
-                    nb::rv_policy::reference_internal,
-                    "Returns a view of the underlying data as a Numpy NDArray")
+                .def("as_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
+                     nb::rv_policy::reference_internal,
+                     "Returns a writable view of the underlying data as a "
+                     "Numpy NDArray")
                 .def(
                     "to_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
                     nb::rv_policy::copy,
