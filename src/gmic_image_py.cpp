@@ -262,12 +262,11 @@ class gmic_image_py {
                                   const char *dim = nullptr)
     {
         if (val < 0)
-            val = size - val;
+            val = size + val;
         if (val < 0 || val >= size) {
-            if (dim)
-                throw out_of_range(string(dim) +
-                                   " coordinate is out-of-bound");
-            throw out_of_range("Coordinate is out-of-bound");
+            throw out_of_range(
+                dim ? (string(dim) + " coordinate is out-of-bound")
+                    : "Coordinate is out-of-bound");
         }
         return static_cast<unsigned int>(val);
     }
@@ -315,17 +314,18 @@ class gmic_image_py {
         return img(x, y, z, c);
     }
 
-    static constexpr auto get_pixel_doc =
+    static constexpr auto pixel_at_doc =
         "Returns a spectrum-sized (e.g 3 for RGB, 4 for RGBA) tuple, of the "
-        "values at [x, y, z]. Z may be omitted if the image depth is 1";
-    static nb::tuple get_pixel(Img &img, const long xi, const long yi,
-                               const long *zi)
+        "values at [x, y, z]. Z may be omitted if the image depth is 1.\n"
+        "Negative values are relative to the end of the axis.\n";
+    static nb::tuple pixel_at(Img &img, const long xi, const long yi,
+                              const optional<long> zi)
     {
         unsigned int x = cast_long(xi, img.width(), "X"),
                      y = cast_long(yi, img.height(), "Y"), z = 0;
         if (zi)
             z = cast_long(*zi, img.depth(), "Z");
-        else if (img.spectrum() != 1)
+        else if (img.depth() != 1)
             throw invalid_argument("Can't omit Z if image depth is not 1");
 
         return to_tuple_func(img.spectrum(),
@@ -383,8 +383,8 @@ class gmic_image_py {
                     "to_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
                     nb::rv_policy::copy,
                     "Returns a copy of the underlying data as a Numpy NDArray")
-                .def("at", &get_pixel, get_pixel_doc, "x"_a, "y"_a,
-                     "z"_a.none() = nullptr)
+                .def("at", &pixel_at, pixel_at_doc, "x"_a, "y"_a,
+                     "z"_a = nb::none())
                 .def_prop_ro(
                     "shape", &shape<>,
                     "Returns the shape (size along each axis) tuple of the "

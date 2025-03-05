@@ -34,8 +34,19 @@ def npdata() -> np.ndarray:
 
 
 @pytest.fixture
+def npdata2d() -> np.ndarray:
+    npshape = (2, 3, 1, 4)
+    return np.arange(np.prod(npshape)).reshape(npshape)
+
+
+@pytest.fixture
 def img(npdata) -> gmic.Image:
     return gmic.Image(npdata.copy())
+
+
+@pytest.fixture
+def img2d(npdata2d) -> gmic.Image:
+    return gmic.Image(npdata2d.copy())
 
 
 def pil_img() -> PIL.Image:
@@ -81,6 +92,19 @@ def test_dlpack_interface(npdata: np.ndarray, img: gmic.Image):
     arr = np.from_dlpack(img)
     nptest.assert_array_equal(npdata, arr)
 
-#
-# def test_operators(npdata: np.ndarray, img: gmic.Image):
-#     nptest.assert_array_equal()
+
+def test_at_pixel(img: gmic.Image, img2d: gmic.Image):
+    arr = img.as_numpy()
+    arr2d = img2d.as_numpy()
+    for x in [0, 1, img.width // 2, -1, -img.width // 2]:
+        for y in [0, 1, img.height // 2, -1, -img.height // 2]:
+            pixel = img2d.at(x, y)
+            assert len(pixel) == img2d.spectrum
+            nptest.assert_array_equal(arr2d[x, y, 0], pixel)
+            for z in [0, 1, img.depth // 2, -1, -img.depth // 2]:
+                pixel = img.at(x, y, z)
+                assert len(pixel) == img.spectrum
+                nptest.assert_array_equal(arr[x, y, z], pixel)
+    assert img.depth > 1
+    with pytest.raises(ValueError):
+        img.at(0, 0)

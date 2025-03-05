@@ -99,7 +99,8 @@ nb::tuple to_tuple_func(I size, F get,
     auto result =
         nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
     for (I i = 0; i < size; ++i) {
-        PyTuple_SET_ITEM(result.ptr(), i, nb::cast(get(i), rv).ptr());
+        auto ptr = nb::cast(get(i), rv);
+        PyTuple_SET_ITEM(result.ptr(), i, ptr.release().ptr());
     }
 
     return result;
