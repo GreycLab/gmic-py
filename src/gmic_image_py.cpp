@@ -128,7 +128,7 @@ class gmic_image_py {
     {
         static constexpr size_t DIM_X = 0, DIM_Y = 1, DIM_Z = 2, DIM_C = 3;
         img.assign(shape[DIM_X], shape[DIM_Y], shape[DIM_Z], shape[DIM_C]);
-        LOG_DEBUG("Copying data from "
+        LOG_DEBUG("\nCopying data from "
                   << arr.data() << " with shape=(" << shape[0] << ", "
                   << shape[1] << ", " << shape[2] << ", " << shape[3]
                   << ") and strides=(" << strides[0] << ", " << strides[1]
@@ -307,9 +307,9 @@ class gmic_image_py {
                     "Invalid number of arguments (must be between 2 and 4)");
         }
 #if DEBUG == 1
-        LOG_TRACE("Interpreting " << nb::repr(args).c_str() << " as (xyzc) = ["
-                                  << x << ", " << y << ", " << z << ", " << c
-                                  << "]" << endl);
+        LOG_TRACE("\nInterpreting " << nb::repr(args).c_str()
+                                    << " as (xyzc) = [" << x << ", " << y
+                                    << ", " << z << ", " << c << "]" << endl);
 #endif
         return img(x, y, z, c);
     }
@@ -328,6 +328,12 @@ class gmic_image_py {
         else if (img.depth() != 1)
             throw invalid_argument("Can't omit Z if image depth is not 1");
 
+#if DEBUG == 1
+        LOG_TRACE("\nInterpreting ("
+                  << xi << ", " << yi << ", " << (zi ? to_string(*zi) : "None")
+                  << ") as (xyz) = (" << x << ", " << y << ", " << z << ")"
+                  << endl);
+#endif
         return to_tuple_func(img.spectrum(),
                              [&](unsigned int i) { return img(x, y, z, i); });
     }
@@ -408,9 +414,7 @@ class gmic_image_py {
                 .def("__str__", &gmic_image_py::str)
                 .def("__repr__", &gmic_image_py::str)
                 .def("__getitem__", &get, get_pydoc)
-                .def(+nb::self,
-                     "Use this operator to ensure you get a non-shared copy "
-                     "of an image instance")
+                .def(+nb::self, "Returns a copy of the image")
                 .def(-nb::self)
                 .def(nb::self == nb::self)
                 .def(nb::self + nb::self)

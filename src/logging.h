@@ -65,8 +65,17 @@ class DebugLogger {
  */
 template <size_t N>
 class function_name_stripped {
-    static constexpr const char *strip_ns[] = {
-        "gmicpy::", "cimg_library::", "std::"};
+    static constexpr const char *strip_ns[][2] = {
+        {"gmicpy::", ""},
+        {"cimg_library::", ""},
+        {"std::", ""},
+        {"nanobind::", "nb::"},
+        {"gmic_image_py<T>::Img", "CImg"},
+        {"gmic_image_py<T>", "Image"},
+        {"gmic_list_py<T>", "ImageList"},
+        {"gmic_list_py<char>", "CharList"},
+        {"gmic_list_base<T>", "ImageList"},
+        {"gmic_list_base<char>", "CharList"}};
     const std::array<char, N + 1> name;
 
    public:
@@ -88,9 +97,9 @@ class function_name_stripped {
         char name[N + 1];
         std::copy_n(oname, N + 1, name);
         std::string_view fname(name);
-        for (const auto ns : strip_ns) {
+        for (auto &[ns, repl] : strip_ns) {
             std::string::size_type from = 0, to = 0, pos;
-            const auto nslen = std::strlen(ns);
+            const auto nslen = std::strlen(ns), replen = std::strlen(repl);
             do {
                 auto search_from = from;
                 do {
@@ -106,6 +115,10 @@ class function_name_stripped {
                 }
                 to += pos - from;
                 from = pos + nslen;
+                if (pos != std::string::npos && replen > 0) {
+                    std::copy_n(repl, replen, name + to);
+                    to += replen;
+                }
             } while (pos != std::string::npos);
         }
         return std::to_array(name);

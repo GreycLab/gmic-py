@@ -152,26 +152,30 @@ class gmic_list_py : public gmic_list_base<T> {
                                  this->begin(), this->end());
     }
 
+    template <bool with_list = false>
     string str()
     {
         stringstream out;
         out << '<' << nb::type_name(nb::type<decltype(*this)>()).c_str()
-            << '[';
-        bool first = true;
-
-        for (auto item : *this) {
-            if (first)
-                first = false;
-            else
-                out << ", ";
-            if constexpr (is_same_v<CImg<T> &, Item>) {
-                out << gmic_image_py<T>::str(item);
+            << " at " << this;
+        if constexpr (with_list) {
+            out << " [";
+            bool first = true;
+            for (auto item : *this) {
+                if (first)
+                    first = false;
+                else
+                    out << ", ";
+                if constexpr (is_same_v<CImg<T> &, Item>) {
+                    out << gmic_image_py<T>::str(item);
+                }
+                else {
+                    out << item;
+                }
             }
-            else {
-                out << item;
-            }
+            out << ']';
         }
-        out << "]>";
+        out << '>';
 
         return out.str();
     }
@@ -183,8 +187,8 @@ class gmic_list_py : public gmic_list_base<T> {
             .def(nb::init_implicit<nb::sequence>())
             .def("__iter__", &gmic_list_py::iter)
             .def("__len__", &gmic_list_py::size)
-            .def("__str__", &gmic_list_py::str)
-            .def("__repr__", &gmic_list_py::str)
+            .def("__str__", &gmic_list_py::str<false>)
+            .def("__repr__", &gmic_list_py::str<true>)
             .def("__getitem__", &gmic_list_py::get, "i"_a,
                  nb::rv_policy::reference_internal)
             .def("__setitem__", &gmic_list_py::set, "i"_a, "v"_a);
