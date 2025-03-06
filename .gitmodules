@@ -1,3 +1,8 @@
 [submodule "gmic"]
 	path = lib/gmic
 	url = https://github.com/GreycLab/gmic
+	shallow = true
+[submodule "cimg"]
+	path = lib/cimg
+	url = https://github.com/GreycLab/CImg
+	shallow = true
