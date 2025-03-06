@@ -13,7 +13,24 @@ if (${FORCE_COLORED_OUTPUT})
     endif ()
 endif ()
 
-add_subdirectory("lib/gmic" EXCLUDE_FROM_ALL)
+set(GMIC_ROOT "${PROJECT_SOURCE_DIR}/lib/gmic")
+set(CIMG_ROOT "${PROJECT_SOURCE_DIR}/lib/cimg")
+if (NOT EXISTS "${GMIC_ROOT}/src/")
+    message(FATAL_ERROR "./lib/gmic submodule appears to be uninitialized. Try running git submodule init; git submodule update")
+endif ()
+
+if (USE_SYSTEM_CIMG)
+    message(VERBOSE "Using system CImg")
+else ()
+    if (NOT EXISTS "${CIMG_ROOT}/CImg.h")
+        message(FATAL_ERROR "lib/cimg submodule appears to be uninitialized. Try running git submodule init; git submodule update")
+    endif ()
+    set(USE_SYSTEM_CIMG 1)
+    message(VERBOSE "Using CImg from lib/cimg")
+    cmake_path(APPEND CMAKE_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/lib/cimg/")
+    include_directories("${PROJECT_SOURCE_DIR}/lib/cimg/")
+endif ()
+add_subdirectory("${GMIC_ROOT}" EXCLUDE_FROM_ALL)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
@@ -48,7 +65,6 @@ nanobind_add_stub(
 get_property(CIMG_COMPILE_DEFS
         TARGET gmic-py
         PROPERTY COMPILE_DEFINITIONS)
-message("Cimg compile defs:" ${CIMG_COMPILE_DEFS})
 
 # Install the module
 if (DEFINED SKBUILD_PLATLIB_DIR)
