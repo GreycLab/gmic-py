@@ -212,40 +212,42 @@ try {
         m.attr("__version__") = version;
     }
     {
-#define IS_DEFINED(macro)                              \
-    (strcmp(#macro, Py_STRINGIFY(macro)) != 0 ? #macro \
-         "=" Py_STRINGIFY(macro)                       \
-                                              : #macro "=N/A")
+#define IS_DEFINED(macro)                                                   \
+    {                                                                       \
+        #macro,                                                             \
+            (strcmp(#macro, Py_STRINGIFY(macro)) != 0 ? Py_STRINGIFY(macro) \
+                                                      : nullptr)            \
+    }
 
         static char build[256];
         stringstream build_str;
         build_str << "Built on " __DATE__ << " at " << __TIME__;
         strncpy(build, build_str.str().c_str(), size(build));
         m.attr("__build__") = build;
-        static const auto flags =
-            to_array({IS_DEFINED(DEBUG),  // NOLINT(*-branch-clone)
-                      IS_DEFINED(__cplusplus),
-                      IS_DEFINED(cimg_display),
-                      IS_DEFINED(cimg_use_pthread),
-                      IS_DEFINED(cimg_use_board),
-                      IS_DEFINED(cimg_use_curl),
-                      IS_DEFINED(cimg_use_fftw3),
-                      IS_DEFINED(cimg_use_half),
-                      IS_DEFINED(cimg_use_heif),
-                      IS_DEFINED(cimg_use_jpeg),
-                      IS_DEFINED(cimg_use_lapack),
-                      IS_DEFINED(cimg_use_magick),
-                      IS_DEFINED(cimg_use_minc2),
-                      IS_DEFINED(cimg_use_opencv),
-                      IS_DEFINED(cimg_use_openexr),
-                      IS_DEFINED(cimg_use_openmp),
-                      IS_DEFINED(cimg_use_png),
-                      IS_DEFINED(cimg_use_tiff),
-                      IS_DEFINED(cimg_use_tinyexr),
-                      IS_DEFINED(cimg_use_vt100),
-                      IS_DEFINED(cimg_use_xrandr),
-                      IS_DEFINED(cimg_use_xshm),
-                      IS_DEFINED(cimg_use_zlib)});
+        const map<const char *, const char *> flags{
+            IS_DEFINED(DEBUG),  // NOLINT(*-branch-clone)
+            IS_DEFINED(__cplusplus),
+            IS_DEFINED(cimg_display),
+            IS_DEFINED(cimg_use_pthread),
+            IS_DEFINED(cimg_use_board),
+            IS_DEFINED(cimg_use_curl),
+            IS_DEFINED(cimg_use_fftw3),
+            IS_DEFINED(cimg_use_half),
+            IS_DEFINED(cimg_use_heif),
+            IS_DEFINED(cimg_use_jpeg),
+            IS_DEFINED(cimg_use_lapack),
+            IS_DEFINED(cimg_use_magick),
+            IS_DEFINED(cimg_use_minc2),
+            IS_DEFINED(cimg_use_opencv),
+            IS_DEFINED(cimg_use_openexr),
+            IS_DEFINED(cimg_use_openmp),
+            IS_DEFINED(cimg_use_png),
+            IS_DEFINED(cimg_use_tiff),
+            IS_DEFINED(cimg_use_tinyexr),
+            IS_DEFINED(cimg_use_vt100),
+            IS_DEFINED(cimg_use_xrandr),
+            IS_DEFINED(cimg_use_xshm),
+            IS_DEFINED(cimg_use_zlib)};
         m.attr("__build_flags__") = flags;
     }
 
