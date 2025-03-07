@@ -2,7 +2,9 @@
 	path = lib/gmic
 	url = https://github.com/GreycLab/gmic
 	shallow = true
+	ignore = dirty
 [submodule "cimg"]
 	path = lib/cimg
 	url = https://github.com/GreycLab/CImg
 	shallow = true
+	ignore = dirty
