@@ -13,6 +13,23 @@ if (${FORCE_COLORED_OUTPUT})
     endif ()
 endif ()
 
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif ()
+
+if (NOT DEFINED GMICPY_VERSION)
+    execute_process(
+            COMMAND "${Python_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/get_version.py"
+            OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE GMICPY_VERSION
+            COMMAND_ERROR_IS_FATAL ANY)
+endif ()
+if (DEFINED SKBUILD_PROJECT_VERSION AND NOT (SKBUILD_PROJECT_VERSION EQUAL GMICPY_VERSION))
+    message(FATAL_ERROR "Versions provided by skbuild and get_version.py differ: "
+            "${SKBUILD_PROJECT_VERSION} != ${GMICPY_VERSION}. Update version.txt with `./get_version.py -u`")
+endif ()
+message(STATUS "Building gmic-py version ${GMICPY_VERSION} (${CMAKE_BUILD_TYPE})")
+
 set(GMIC_ROOT "${PROJECT_SOURCE_DIR}/lib/gmic")
 set(CIMG_ROOT "${PROJECT_SOURCE_DIR}/lib/cimg")
 if (NOT EXISTS "${GMIC_ROOT}/src/")
@@ -32,11 +49,6 @@ else ()
 endif ()
 add_subdirectory("${GMIC_ROOT}" EXCLUDE_FROM_ALL)
 
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
-endif ()
-
 # Detect the installed nanobind package and import it into CMake
 execute_process(
         COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
@@ -53,7 +65,7 @@ nanobind_add_module(gmic-py "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "__init__")
-target_compile_definitions(gmic-py PRIVATE "DEBUG=$<IF:$<CONFIG:Debug>,1,0>")
+target_compile_definitions(gmic-py PRIVATE "DEBUG=$<IF:$<CONFIG:Debug>,1,0>" "GMICPY_VERSION=${GMICPY_VERSION}")
 nanobind_add_stub(
         gmic-py-stub
         MODULE gmic
