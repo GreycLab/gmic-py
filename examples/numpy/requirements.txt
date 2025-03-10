@@ -1,4 +1,0 @@
-gmic>=2.9.0
-numpy
-Pillow
-matplotlib
