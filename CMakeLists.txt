@@ -20,13 +20,16 @@ endif ()
 
 if (NOT DEFINED GMICPY_VERSION)
     execute_process(
-            COMMAND "${Python_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/get_version.py"
+            COMMAND "${Python_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/version_build.py"
             OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE GMICPY_VERSION
             COMMAND_ERROR_IS_FATAL ANY)
 endif ()
-if (DEFINED SKBUILD_PROJECT_VERSION AND NOT (SKBUILD_PROJECT_VERSION EQUAL GMICPY_VERSION))
-    message(FATAL_ERROR "Versions provided by skbuild and get_version.py differ: "
-            "${SKBUILD_PROJECT_VERSION} != ${GMICPY_VERSION}. Update version.txt with `./get_version.py -u`")
+if (DEFINED SKBUILD_PROJECT_VERSION_FULL)
+    string(REGEX REPLACE [[^([^+]+)(\+.*)?$]] [[\1]] SKBUILD_VERSION_NOLOCAL ${SKBUILD_PROJECT_VERSION_FULL})
+    if (NOT SKBUILD_VERSION_NOLOCAL STREQUAL GMICPY_VERSION)
+        message(FATAL_ERROR "Versions provided by skbuild and version_build.py differ: "
+                "${SKBUILD_VERSION_NOLOCAL} != ${GMICPY_VERSION}. Update version.txt with `./version_build.py -u`")
+    endif ()
 endif ()
 message(STATUS "Building gmic-py version ${GMICPY_VERSION} (${CMAKE_BUILD_TYPE})")
 

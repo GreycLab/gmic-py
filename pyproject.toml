@@ -78,7 +78,7 @@ result = "{version}"
 
 [[tool.scikit-build.overrides]]
 if.env.DEBUG = true
-build-dir = "build"
+build-dir = "build/debug"
 cmake.build-type = "Debug"
 
 [[tool.scikit-build.overrides]]
