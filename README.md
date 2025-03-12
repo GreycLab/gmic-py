@@ -1,7 +1,7 @@
 [![G'MIC Logo](https://gmic.eu/img/logo4.jpg)](https://gmic.eu)
 [![Python Logo](https://www.python.org/static/community_logos/python-logo-master-v3-TM-flattened.png)](https://www.python.org)
 
-####                                                          
+####                                                                 
 
 #### Python binding for G'MIC - A Full-Featured Open-Source Framework for Image Processing
 
@@ -78,8 +78,10 @@ according to the following logic:
     * since the last gmic submodule update otherwise
 
 To make the script usable even on older commits on dev branches, if the given ref has already been
-merged into stable, then it will pretend stable to be the last stable commit before said merge. Here's an example of git
-history with the version corresponding to each commit between brackets. Stable commits on the
+merged into stable, then it will pretend stable to be the last stable commit before said merge
+(e.g in the graph below, running version_build on 1c7d5ec will consider 'stable' to be cf1d5e6 even if 7b32186 already
+exists).
+Here's an example of git history with the version corresponding to each commit between brackets. Stable commits on the
 left branch, dev on the right :
 
 ```

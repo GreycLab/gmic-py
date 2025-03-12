@@ -193,6 +193,19 @@ class interpreter_py {
     }
 };
 
+template <size_t N = 8>
+constexpr array<char, N> get_gmic_version()
+{
+    char version[N] = "?.?.?";
+    constexpr auto patch = gmic_version % 10, minor = gmic_version / 10 % 10,
+                   major = gmic_version / 100;
+    static_assert(major < 10);
+    version[0] = '0' + major;
+    version[2] = '0' + minor;
+    version[4] = '0' + patch;
+    return to_array(version);
+}
+
 NB_MODULE(gmic, m)
 try {
 #if DEBUG == 1
@@ -204,12 +217,17 @@ try {
     }
 #endif
     {
-        static char version[16];
-        constexpr auto patch = gmic_version % 10,
-                       minor = gmic_version / 10 % 10,
-                       major = gmic_version / 100;
-        snprintf(version, std::size(version), "%d.%d.%d", major, minor, patch);
-        m.attr("__version__") = version;
+        constexpr auto version = get_gmic_version();
+        m.attr("__version__") = version.data();
+#if defined(GMICPY_VERSION)
+        constexpr auto gmicpy_version = Py_STRINGIFY(GMICPY_VERSION);
+        constexpr string_view gmicpy_view(gmicpy_version);
+        static_assert(
+            gmicpy_view.starts_with(version.data()),
+            "GMICPY_VERSION (" Py_STRINGIFY(GMICPY_VERSION)
+            ") does not match gmic_version (" Py_STRINGIFY(gmic_version) ")");
+        m.attr("__pyversion__") = gmicpy_version;
+#endif
     }
     {
 #define IS_DEFINED(macro)                                                   \

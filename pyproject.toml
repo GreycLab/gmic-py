@@ -59,8 +59,8 @@ build-type = "Release"
 targets = []
 
 [tool.scikit-build.sdist]
-include = []
-exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources"]
+include = ["/version.txt", "/lib/cimg/CImg.h"]
+exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources", "/lib/cimg"]
 reproducible = true
 cmake = false
 
