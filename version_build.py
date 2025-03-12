@@ -16,8 +16,8 @@ REG_HASH = re.compile('[0-9a-f]+')
 REG_HASHLIST = re.compile('|([0-9a-f]+\n)*[0-9a-f]+')
 VERBOSE = False
 
-parser = argparse.ArgumentParser(description="Calculate the project version",
-                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                 description="Calculate the project version and optionally build or install the project")
 parser.add_argument('-u', '--update', action='store_true',
                     help=f"Writes the result in {DEFAULT_OUTPUT_FILE}, instead of only printing the calculated version")
 parser.add_argument('-v', '--verbose', action='store_true', help="Enable debug messages")
@@ -28,6 +28,12 @@ parser.add_argument('-n', '--next-stable', action='store_true',
                     help="Calculates the next_stable version, i.e if you merged ref to stable")
 parser.add_argument('-b', '--bottom', default='versioning-start',
                     help="Defines the earliest commit that should be accounted for")
+parser.add_argument('--build', nargs=argparse.REMAINDER,
+                    help="Invokes 'python -m build ...ARGS' after calculating the version, passing on any argument"
+                         " after this one. Implies --update.")
+parser.add_argument('--install', nargs=argparse.REMAINDER,
+                    help="Invokes 'python -m pip install ...ARGS' on the package in the current environment, passing"
+                         " on any argument after this one. Implies --update.")
 
 
 def debug(msg: str):
@@ -135,6 +141,17 @@ if __name__ == '__main__':
         version += f".dev{dev_dist}"
     print(version)
 
-    if args.update:
-        with open(SCRIPT_DIR / DEFAULT_OUTPUT_FILE, 'w') as f:
+    if args.update or args.build is not None:
+        output_file = SCRIPT_DIR / DEFAULT_OUTPUT_FILE
+        with open(output_file, 'w') as f:
+            debug(f'Writing result to {output_file}')
             f.write(version)
+
+    if args.build is not None:
+        cmd = ['python', '-m', 'build'] + args.build
+        debug(f"Invoking {repr(cmd)}")
+        os.execv(sys.executable, cmd)
+    elif args.install is not None:
+        cmd = ['python', '-m', 'pip', 'install'] + args.install
+        debug(f"Invoking {repr(cmd)}")
+        os.execv(sys.executable, cmd)

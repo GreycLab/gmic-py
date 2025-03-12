@@ -44,9 +44,29 @@ imglst = gmic.run("sp rose fx_bokeh 3,8,0,30,8,4,0.3,0.2,210,210,80,160,0.7,30,2
 gmic.run("output rose_with_bokeh.png", imglst)
 ```
 
+## Building
+
+This project uses [Scikit-build-core](https://scikit-build-core.readthedocs.io/) which is a PEP-517-style build backend.
+You can build it with `python -m build` but first you need to put the version string in version.txt at the root of the
+repository (skbuild does not have a pre-build hook, sadly).
+`./version_build.py -u` will do that, and can even invoke the build module or pip afterwards, like so :
+
+```shell
+$ ./version_build.py -u # Calculates the version string and writes it into version.txt
+$ ./version_build.py -u && python -m build -v # Calculates and write the version then build sdist and wheel files
+# Equivalent shortcut: 
+$ ./version_build.py --build -v # Calculates and write the version then invoke python -m build -swn (anything after --build is passed on to build).
+$ ./version_build.py --install -v . # Calculates and write the version then invoke python -m pip install -v . (anything after --install is passed on to pip)
+```
+
+All of the above will produce Release builds, set the DEBUG environment variable for Debug builds (e.g
+`DEBUG=1 ./version_build.py --build`). Building gmic-py implies building gmic, which can take a while. For developpment
+you can save a lot of time by disabling build isolation (`-n` for build or `--no-build-isolation` for pip), which will
+reuse the same build directory (./build/debug or ./build/release) and thus not rebuild gmic unless necessary.
+
 ## Versioning
 
-The version of the binding is calculated by `get_version.py`, and is formatted `X.Y.Z[.rR][.devD]` (i.e 3.3.5.r2.dev5),
+The version of the binding calculated by `version_build.py` is formatted `X.Y.Z[.rR][.devD]` (i.e 3.3.5.r2.dev5),
 according to the following logic:
 
 * Each update of the gmic submodule is tagged `gmic-X.Y.Z`

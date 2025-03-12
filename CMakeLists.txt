@@ -18,21 +18,6 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif ()
 
-if (NOT DEFINED GMICPY_VERSION)
-    execute_process(
-            COMMAND "${Python_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/version_build.py"
-            OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE GMICPY_VERSION
-            COMMAND_ERROR_IS_FATAL ANY)
-endif ()
-if (DEFINED SKBUILD_PROJECT_VERSION_FULL)
-    string(REGEX REPLACE [[^([^+]+)(\+.*)?$]] [[\1]] SKBUILD_VERSION_NOLOCAL ${SKBUILD_PROJECT_VERSION_FULL})
-    if (NOT SKBUILD_VERSION_NOLOCAL STREQUAL GMICPY_VERSION)
-        message(FATAL_ERROR "Versions provided by skbuild and version_build.py differ: "
-                "${SKBUILD_VERSION_NOLOCAL} != ${GMICPY_VERSION}. Update version.txt with `./version_build.py -u`")
-    endif ()
-endif ()
-message(STATUS "Building gmic-py version ${GMICPY_VERSION} (${CMAKE_BUILD_TYPE})")
-
 set(GMIC_ROOT "${PROJECT_SOURCE_DIR}/lib/gmic")
 set(CIMG_ROOT "${PROJECT_SOURCE_DIR}/lib/cimg")
 if (NOT EXISTS "${GMIC_ROOT}/src/")
@@ -68,7 +53,13 @@ nanobind_add_module(gmic-py "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "__init__")
-target_compile_definitions(gmic-py PRIVATE "DEBUG=$<IF:$<CONFIG:Debug>,1,0>" "GMICPY_VERSION=${GMICPY_VERSION}")
+
+target_compile_definitions(gmic-py PRIVATE "DEBUG=$<IF:$<CONFIG:Debug>,1,0>")
+if (DEFINED SKBUILD_PROJECT_VERSION_FULL)
+    message(STATUS "Building gmic-py version ${SKBUILD_PROJECT_VERSION_FULL} (${CMAKE_BUILD_TYPE})")
+    target_compile_definitions(gmic-py PRIVATE "GMICPY_VERSION=${SKBUILD_PROJECT_VERSION_FULL}")
+endif ()
+
 nanobind_add_stub(
         gmic-py-stub
         MODULE gmic
