@@ -5,4 +5,5 @@ docs/_build/
 venv
 /dist
 __pycache__
-py-build-cmake.local.toml
+*.whl
+*.so

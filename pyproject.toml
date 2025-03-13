@@ -1,9 +1,8 @@
 [project]
 name = "gmic"
-version = "3.3.6"
 description = "Python bindings for the G'MIC C++ image processing library"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 authors = [
     { "name" = "David Tschumperlé", "email" = "David.Tschumperle@ensicaen.fr" },
     { "name" = "Sébastien Fourey", "email" = "Sebastien.Fourey@ensicaen.fr" },
@@ -25,6 +24,7 @@ classifiers = [
     "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
     "Programming Language :: Python :: 3",
 ]
+dynamic = ["version"]
 
 dependencies = []
 
@@ -40,22 +40,40 @@ jupyter = ["wurlitzer"]
 
 
 [build-system]
-requires = ["py-build-cmake~=0.1.8"]
-build-backend = "py_build_cmake.build"
+requires = ["scikit-build-core", "nanobind~=1.9.2"]
+build-backend = "scikit_build_core.build"
 
-[tool.py-build-cmake.module]
-directory = "pysrc"
+[tool.scikit-build]
+logging.level = "WARNING"
+minimum-version = "0.9"
+build-dir = "build"
 
-[tool.py-build-cmake.sdist]
-include = ["CMakeLists.txt", "src", "lib"]
-exclude = ["src/gmic/html", "src/gmic/.git*"]
+[tool.scikit-build.cmake]
+version = ">=3.17"
+build-type = "Release"
+targets = []
 
-[tool.py-build-cmake.cmake]
-minimum_version = "3.17"
-build_type = "Release"
-build_path = "build"
-install_components = ["python_modules"]
+[tool.scikit-build.sdist]
+include = []
+exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources"]
+reproducible = true
+cmake = false
 
-[tool.pytest.ini_options]
-minversion = "6.0"
-testpaths = ["test"]
+[tool.scikit-build.wheel]
+packages = []
+exclude = []
+license-files = ["COPYING"]
+py-api = "cp38"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+[tool.setuptools_scm]
+root = "lib/gmic/"
+tag_regex = "v.(?P<version>\\d+\\.\\d+\\.\\d+)"
+
+
+
+
+
+
