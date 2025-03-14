@@ -41,7 +41,8 @@ def debug(msg: str):
         print("[DEBUG] " + msg, file=sys.stderr)
 
 
-def run_git(command: list[str], *, error: bool | str = True, expect: Optional[re.Pattern] = None) -> Optional[str]:
+def run_git(command: "list[str]", *, error: "bool | str" = True,
+            expect: "Optional[re.Pattern]" = None) -> "Optional[str]":
     cmd = "'git {} …'".format(command[0])
     debug("Running command $ {}".format("git " + " ".join(a.replace(' ', '\\ ') for a in command)))
     proc = subprocess.run(['git'] + command, text=True, capture_output=True)
@@ -148,10 +149,10 @@ if __name__ == '__main__':
             f.write(version)
 
     if args.build is not None:
-        cmd = ['python', '-m', 'build'] + args.build
+        cmd = [sys.executable, '-m', 'build'] + args.build
         debug(f"Invoking {repr(cmd)}")
         os.execv(sys.executable, cmd)
     elif args.install is not None:
-        cmd = ['python', '-m', 'pip', 'install'] + args.install
+        cmd = [sys.executable, '-m', 'pip', 'install'] + args.install
         debug(f"Invoking {repr(cmd)}")
         os.execv(sys.executable, cmd)
