@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_CXX_STANDARD 20)
 project(gmic-py LANGUAGES C CXX)
-find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(Python 3.8
+        COMPONENTS Interpreter Development.Module ${SKBUILD_SABI_COMPONENT}
+        REQUIRED)
 message(STATUS "Using python executable: ${Python_EXECUTABLE}")
 
 option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." FALSE)
@@ -13,7 +15,7 @@ if (${FORCE_COLORED_OUTPUT})
     endif ()
 endif ()
 
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+if (NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif ()
@@ -46,10 +48,13 @@ find_package(nanobind CONFIG REQUIRED)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gmic)
 
 # Add the module to compile
-if (NOT SKBUILD_PROJECT_NAME)
-    set(SKBUILD_PROJECT_NAME gmic)
+list(APPEND NANOBIND_MODULE_FILES "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src/translate_args.h")
+
+if (SKBUILD_SABI_COMPONENT)
+    nanobind_add_module(gmic-py STABLE_ABI ${NANOBIND_MODULE_FILES})
+else ()
+    nanobind_add_module(gmic-py ${NANOBIND_MODULE_FILES})
 endif ()
-nanobind_add_module(gmic-py "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src/translate_args.h")
 target_link_libraries(gmic-py PRIVATE libgmicstatic)
 set_target_properties(gmic-py PROPERTIES
         OUTPUT_NAME "__init__")
@@ -60,6 +65,7 @@ if (DEFINED SKBUILD_PROJECT_VERSION_FULL)
     target_compile_definitions(gmic-py PRIVATE "GMICPY_VERSION=${SKBUILD_PROJECT_VERSION_FULL}")
 endif ()
 
+cmake_policy(SET CMP0112 NEW)
 nanobind_add_stub(
         gmic-py-stub
         MODULE gmic

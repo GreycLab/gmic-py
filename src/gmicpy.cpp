@@ -85,7 +85,7 @@ nb::tuple to_tuple(V v, nb::rv_policy rv = nb::rv_policy::automatic)
         nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
     size_t i = 0;
     for (const auto &e : v) {
-        PyTuple_SET_ITEM(result.ptr(), i++, nb::cast(e, rv).ptr());
+        PyTuple_SetItem(result.ptr(), i++, nb::cast(e, rv).ptr());
     }
 
     return result;
@@ -100,7 +100,7 @@ nb::tuple to_tuple_func(I size, F get,
         nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
     for (I i = 0; i < size; ++i) {
         auto ptr = nb::cast(get(i), rv);
-        PyTuple_SET_ITEM(result.ptr(), i, ptr.release().ptr());
+        PyTuple_SetItem(result.ptr(), i, ptr.release().ptr());
     }
 
     return result;

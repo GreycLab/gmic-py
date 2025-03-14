@@ -50,7 +50,7 @@ build-backend = "scikit_build_core.build"
 [tool.scikit-build]
 logging.level = "WARNING"
 minimum-version = "0.9"
-build-dir = "build/release"
+build-dir = "build/{wheel_tag}/{build_type}"
 
 [tool.scikit-build.cmake]
 args = ["-GNinja"]
@@ -68,7 +68,8 @@ cmake = false
 packages = []
 exclude = []
 license-files = ["COPYING"]
-py-api = "cp38"
+# Use the stable ABI from 3.12 onwards (nanobind requirement)
+py-api = "cp312"
 
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.regex"
@@ -78,7 +79,6 @@ result = "{version}"
 
 [[tool.scikit-build.overrides]]
 if.env.DEBUG = true
-build-dir = "build/debug"
 cmake.build-type = "Debug"
 
 [[tool.scikit-build.overrides]]
