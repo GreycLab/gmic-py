@@ -1,5 +1,5 @@
 [project]
-name = "gmic"
+name = "gmic-py"
 description = "Python bindings for the G'MIC C++ image processing library"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -60,7 +60,7 @@ targets = []
 
 [tool.scikit-build.sdist]
 include = ["/version.txt", "/lib/cimg/CImg.h"]
-exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources", "/lib/cimg"]
+exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources", "/lib/cimg", "version_build.py"]
 reproducible = true
 cmake = false
 
