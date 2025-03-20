@@ -74,8 +74,22 @@ if __name__ == '__main__':
                             expect=REG_HASH)
     debug(f"Using starting point '{starting_ref}' i.e {starting_hash}")
     stable_ref = starting_ref if args.stable is None else args.stable
-    stable_hash = run_git(['rev-parse', '--short', stable_ref], error="Couldn't resolve revision {}".format(stable_ref),
-                          expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+
+    stable_hash = None
+    try:
+        stable_hash = run_git(['rev-parse', '--short', stable_ref],
+                              error=f"Couldn't resolve revision {stable_ref}",
+                              expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+    except RuntimeError:
+        pass
+    if stable_hash is None and '/' not in stable_ref:
+        remote_stable_ref = f'origin/{stable_ref}'
+        stable_hash = run_git(['rev-parse', '--short', remote_stable_ref],
+                              error=f"Couldn't resolve revision {stable_ref} or {remote_stable_ref}",
+                              expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+        print(f"[WARN] Couldn't resolve {stable_ref}, assuming {remote_stable_ref}. "
+              "You should create a corresponding local branch", file=sys.stderr)
+        stable_ref = remote_stable_ref
     debug(f"Using stable ref '{stable_ref}' i.e {stable_hash}")
     bottom_ref = args.bottom
     bottom_hash = run_git(['rev-parse', '--short', bottom_ref], error="Couldn't resolve revision {}".format(bottom_ref),
