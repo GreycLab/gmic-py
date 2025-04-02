@@ -12,6 +12,8 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include <sstream>
+
 // Include gmic et CImg after nanobind
 #include <CImg.h>
 #include <gmic.h>

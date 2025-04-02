@@ -86,3 +86,18 @@ if.env.DEBUG = true
 if.state = "^(metadata_)?(wheel|editable)$"
 inherit.metadata.version = "append"
 metadata.version.result = "{version}+dbg"
+
+[[tool.scikit-build.overrides]]
+if.env.CIBUILDWHEEL = true
+build-dir = ""
+
+[tool.cibuildwheel]
+build-frontend = "build"
+archs = "auto64"
+build = "cp38-manylinux* cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux*"
+test-command = "pytest {project}/tests"
+test-requires = "-r ./tests/requirements.txt"
+before-all = "{project}/tools/before_all.sh"
+# AlmaLinux 9 (RHEL-based)
+manylinux-x86_64-image = "quay.io/pypa/manylinux_2_34"
+manylinux-aarch64-image = "quay.io/pypa/manylinux_2_34"

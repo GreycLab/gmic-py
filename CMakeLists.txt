@@ -1,12 +1,18 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_CXX_STANDARD 20)
 project(gmic-py LANGUAGES C CXX)
+
 find_package(Python 3.8
         COMPONENTS Interpreter Development.Module ${SKBUILD_SABI_COMPONENT}
         REQUIRED)
 message(STATUS "Using python executable: ${Python_EXECUTABLE}")
+set(IGNORE_UNUSED "${Python3_EXECUTABLE}") # Silence CMake warning about this variable passed by CLion
 
-option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." FALSE)
+option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." OFF)
+option(USE_SYSTEM_CIMG_GMICPY "Use CImg from the system, otherwise the local cimg git submodule will be used. \
+Overrides gmic's CMake USE_SYSTEM_CIMG option" OFF)
+set(USE_SYSTEM_CIMG ON CACHE BOOL "This option is superseded by USE_SYSTEM_CIMG_GMICPY, its value will be ignored" FORCE)
+
 if (${FORCE_COLORED_OUTPUT})
     if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
         add_compile_options(-fdiagnostics-color=always)
@@ -20,24 +26,23 @@ if (NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif ()
 
-set(GMIC_ROOT "${PROJECT_SOURCE_DIR}/lib/gmic")
-set(CIMG_ROOT "${PROJECT_SOURCE_DIR}/lib/cimg")
-if (NOT EXISTS "${GMIC_ROOT}/src/")
+set(GMIC_SOURCE "${PROJECT_SOURCE_DIR}/lib/gmic")
+set(CIMG_SOURCE "${PROJECT_SOURCE_DIR}/lib/cimg")
+if (NOT EXISTS "${GMIC_SOURCE}/src/")
     message(FATAL_ERROR "./lib/gmic submodule appears to be uninitialized. Try running git submodule init; git submodule update")
 endif ()
 
-if (USE_SYSTEM_CIMG)
+if (USE_SYSTEM_CIMG_GMICPY)
     message(VERBOSE "Using system CImg")
 else ()
-    if (NOT EXISTS "${CIMG_ROOT}/CImg.h")
+    if (NOT EXISTS "${CIMG_SOURCE}/CImg.h")
         message(FATAL_ERROR "lib/cimg submodule appears to be uninitialized. Try running git submodule init; git submodule update")
     endif ()
-    set(USE_SYSTEM_CIMG 1)
     message(VERBOSE "Using CImg from lib/cimg")
-    cmake_path(APPEND CMAKE_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/lib/cimg/")
+    list(APPEND CMAKE_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/lib/cimg/")
     include_directories("${PROJECT_SOURCE_DIR}/lib/cimg/")
 endif ()
-add_subdirectory("${GMIC_ROOT}" EXCLUDE_FROM_ALL)
+add_subdirectory("${GMIC_SOURCE}" EXCLUDE_FROM_ALL)
 
 # Detect the installed nanobind package and import it into CMake
 execute_process(
@@ -74,9 +79,6 @@ nanobind_add_stub(
         PYTHON_PATH $<TARGET_FILE_DIR:gmic-py>
         MARKER_FILE "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/py.typed"
 )
-get_property(CIMG_COMPILE_DEFS
-        TARGET gmic-py
-        PROPERTY COMPILE_DEFINITIONS)
 
 # Install the module
 if (DEFINED SKBUILD_PLATLIB_DIR)
