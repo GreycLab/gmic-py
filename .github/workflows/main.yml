@@ -1,36 +1,193 @@
-name: Build wheels
+name: Build wheels and create release
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - main
+      - dev
+  workflow_dispatch:
+    inputs:
+      merge-main:
+        description: 'Whether to merge into main'
+        required: false
+        default: true
+        type: boolean
+      main-branch:
+        description: 'Which branch to use as main'
+        required: false
+        type: string
+      fake-wheels:
+        description: 'Build fake wheel for testing purposes'
+        required: false
+        default: false
+        type: boolean
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  MAIN_BRANCH: ${{ inputs.main-branch || 'main' }}
+  MERGE_MAIN: ${{ (inputs.merge-main == null || inputs.merge-main) && github.ref != format('refs/heads/{0}', inputs.main-branch || 'main') }}
+  FAKE_WHEELS: ${{ inputs.fake-wheels != null && inputs.fake-wheels }}
 
 jobs:
+  build_sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    outputs:
+      gmicpy-version: ${{ steps.version.outputs.gmicpy-version }}
+      sdist-file: ${{ steps.build.outputs.sdist-file }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+          fetch-depth: '1'
+
+      - run: git fetch --filter='tree:0' --deepen=1000 --no-recurse-submodules --tags origin "$MAIN_BRANCH" "$GITHUB_REF"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ">=3.12"
+
+      - id: version
+        name: Set gmic-py version
+        env:
+          NEXT_STABLE: ${{ env.MERGE_MAIN && '--next-stable' || '' }}
+        run: |
+          python ./version_build.py -vu $NEXT_STABLE --stable "origin/$MAIN_BRANCH"
+          GMICPY_VERSION=$(cat version.txt)
+          if [ -z "$GMICPY_VERSION" ]; then
+            echo "::error::Couldn't read version from version.txt"; exit 1
+          fi
+          echo "::notice::Calculated gmic-py version $GMICPY_VERSION"
+          echo "gmicpy-version=$GMICPY_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install build
+        run: python -m pip install build
+
+      - id: build
+        name: Build sdist
+        run: |
+          python -m build -vso dist/
+          cd dist/
+          RESULT=(*.tar.gz)
+          if ! [ "${#RESULT[*]}" = 1 ]; then
+            echo "::error::More than one file generated" && exit 1
+          elif ! [ -f "$RESULT" ]; then
+            echo "::error::Couldn't find sdist file" && exit 1
+          else
+            RESULT_R=${RESULT/.post/.r}
+            if [[ "$RESULT_R" != "$RESULT" ]]; then
+              mv -v "$RESULT" "$RESULT_R"
+              RESULT="$RESULT_R"
+            fi
+            echo "::notice::Successfully generated sdist $RESULT"
+          fi
+          echo "sdist-file=$RESULT" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: ./dist/${{ steps.build.outputs.sdist-file }}
+
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
+    needs: build_sdist
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-13, macos-latest ]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+
+      - name: Extract sdist
+        env:
+          SDIST_NAME: ${{ needs.build_sdist.outputs.sdist-file }}
+        run: tar xvfz "$SDIST_NAME" --strip-components=1
+
+      - id: build
+        name: Build wheels
+        if: inputs.fake-wheels == null || ! inputs.fake-wheels
+        uses: pypa/cibuildwheel@v2.23.2
 
       - uses: actions/setup-python@v5
+        if: steps.build.outcome == 'skipped'
         with:
           python-version: ">=3.12"
 
-      - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.23.0
-
-      - name: Set gmic-py version
-        run: python ./version_build.py -vu
-
-      - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
+      - name: Build fake wheels
+        if: steps.build.outcome == 'skipped'
+        env:
+          GMICPY_VERSION: ${{ needs.build_sdist.outputs.gmicpy-version }}
+        run: |
+          mkdir wheelhouse
+          python -m pip install cibuildwheel==2.23.0
+          cibuildwheel --print-build-identifiers | while read plat; do
+            echo "This is a fake wheel for platform $plat" > fake_tag.txt
+            tar cvfz "./wheelhouse/gmic_py-$GMICPY_VERSION-$plat.whl" --exclude "wheelhouse" .
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
+
+  release:
+    needs:
+      - build_sdist
+      - build_wheels
+    runs-on: ubuntu-latest
+    env:
+      GMICPY_VERSION: ${{ needs.build_sdist.outputs.gmicpy-version }}
+    steps:
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: ./dist/
+
+      - if: env.MERGE_MAIN
+        uses: actions/checkout@v4
+        with:
+          submodules: 'false'
+          ref: ${{ env.MAIN_BRANCH }}
+          path: gmic-py
+          fetch-depth: '0'
+
+      - id: merge
+        name: Merge to main
+        if: env.MERGE_MAIN
+        env:
+          TARGET: ${{ github.sha }}
+        working-directory: gmic-py
+        run: |
+          git fetch origin "$TARGET"
+          if ! MERGE_BASE=$( git merge-base "$TARGET" "refs/heads/$MAIN_BRANCH" ); then
+            echo "::error::Couldn't calculate merge-base between $TARGET and refs/heads/$MAIN_BRANCH" && exit 1
+          fi
+          MAIN_PARENT=$( git rev-parse "refs/heads/$MAIN_BRANCH^2" )
+          if [ "$MERGE_BASE" != "$MAIN_PARENT" ]; then
+            echo "::error::Merge base $MERGE_BASE is not the second parent of main ref $MAIN_BRANCH ($MAIN_PARENT)"
+            exit 1
+          fi
+          # Copy author and committer information from the target commit
+          export $( git show --no-patch "$TARGET" --format=format:$'GIT_COMMITTER_NAME=%cn\nGIT_COMMITTER_EMAIL=%ce\nGIT_AUTHOR_NAME=%an\nGIT_AUTHOR_EMAIL=%ae' )
+          git merge --no-ff -m "Merge version $GMICPY_VERSION into $MAIN_BRANCH" "$TARGET"
+          TAGNAME="v$GMICPY_VERSION"
+          MERGEHASH=$( git rev-parse HEAD )
+          git tag "$TAGNAME" && echo "::notice::Tagged merge commit $MERGEHASH as $TAGNAME" 
+          git push origin HEAD "refs/tags/v$GMICPY_VERSION"
+          echo "merge-hash=$MERGEHASH" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET: ${{ env.MERGE_MAIN && steps.merge.outputs.merge-hash || github.ref }}
+        run: |
+          echo "::notice::Creating release $GMICPY_VERSION:"
+          ls -l1 ./dist/
+          gh release create --generate-notes --draft --target "$GITHUB_REF" --repo "$GITHUB_REPOSITORY" "v$GMICPY_VERSION" ./dist/*
