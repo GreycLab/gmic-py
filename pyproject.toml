@@ -28,15 +28,13 @@ dynamic = ["version"]
 
 dependencies = []
 
-[project.optional-dependencies]
-jupyter = ["wurlitzer"]
-
 [project.urls]
-"Bug Reports" = "https://github.com/GreycLab/gmic-py/issues"
-"Funding" = "https://libreart.info/en/projects/gmic"
+"Homepage" = "https://gmic.eu/"
+"source" = "https://github.com/GreycLab/gmic-py"
+"releasenotes" = "https://github.com/GreycLab/gmic-py/releases/"
+"issues" = "https://github.com/GreycLab/gmic-py/issues"
+"funding" = "https://libreart.info/en/projects/gmic"
 "Say Thanks!" = "https://twitter.com/gmic_eu"
-"Source" = "https://github.com/GreycLab/gmic-py"
-"Documentation" = "https://gmic-py.readthedocs.io"
 
 
 [build-system]
