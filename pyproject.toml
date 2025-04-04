@@ -89,6 +89,11 @@ metadata.version.result = "{version}+dbg"
 if.env.CIBUILDWHEEL = true
 build-dir = ""
 
+[[tool.scikit-build.overrides]]
+if.env.CIBUILDWHEEL = true
+if.env.GMIC_DEFAULT_FEATURES = false
+cmake.define.GMIC_LIMITED_FEATURES = true
+
 [tool.cibuildwheel]
 build-frontend = "build"
 archs = "auto64"

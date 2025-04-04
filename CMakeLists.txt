@@ -8,10 +8,26 @@ find_package(Python 3.8
 message(STATUS "Using python executable: ${Python_EXECUTABLE}")
 set(IGNORE_UNUSED "${Python3_EXECUTABLE}") # Silence CMake warning about this variable passed by CLion
 
+option(GMIC_LIMITED_FEATURES "Disab<les a few of gmic's optional features, to build smaller wheels" OFF)
 option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." OFF)
 option(USE_SYSTEM_CIMG_GMICPY "Use CImg from the system, otherwise the local cimg git submodule will be used. \
 Overrides gmic's CMake USE_SYSTEM_CIMG option" OFF)
 set(USE_SYSTEM_CIMG ON CACHE BOOL "This option is superseded by USE_SYSTEM_CIMG_GMICPY, its value will be ignored" FORCE)
+# Options from CImg
+if (GMIC_LIMITED_FEATURES)
+    option(ENABLE_CURL "Add support for curl" OFF) # gmic default ON
+    option(ENABLE_X "Add support for X11" ON)
+    option(ENABLE_XSHM "Add support for X11 Xshm extension" OFF)
+    option(ENABLE_FFTW "Add support for FFTW" ON)
+    option(ENABLE_GRAPHICSMAGICK "Add support for GrahicsMagick" OFF) # gmic default ON
+    option(ENABLE_JPEG "Add support for handling images in Jpeg format" ON)
+    option(ENABLE_OPENCV "Add support for OpenCV" OFF)
+    option(ENABLE_OPENEXR "Add support for handling images in EXR format" OFF) # gmic default ON
+    option(ENABLE_OPENMP "Add support for parallel processing" OFF) # gmic default ON
+    option(ENABLE_PNG "Add support for handling images in PNG format" ON)
+    option(ENABLE_TIFF "Add support for handling images in Tiff format" ON)
+    option(ENABLE_ZLIB "Add support for data compression via Zlib" ON)
+endif ()
 
 if (${FORCE_COLORED_OUTPUT})
     if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
