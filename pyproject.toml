@@ -1,5 +1,5 @@
 [project]
-name = "gmic"
+name = "gmic-py"
 description = "Python bindings for the G'MIC C++ image processing library"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -28,15 +28,13 @@ dynamic = ["version"]
 
 dependencies = []
 
-[project.optional-dependencies]
-jupyter = ["wurlitzer"]
-
 [project.urls]
-"Bug Reports" = "https://github.com/GreycLab/gmic-py/issues"
-"Funding" = "https://libreart.info/en/projects/gmic"
+"Homepage" = "https://gmic.eu/"
+"source" = "https://github.com/GreycLab/gmic-py"
+"releasenotes" = "https://github.com/GreycLab/gmic-py/releases/"
+"issues" = "https://github.com/GreycLab/gmic-py/issues"
+"funding" = "https://libreart.info/en/projects/gmic"
 "Say Thanks!" = "https://twitter.com/gmic_eu"
-"Source" = "https://github.com/GreycLab/gmic-py"
-"Documentation" = "https://gmic-py.readthedocs.io"
 
 
 [build-system]
@@ -60,7 +58,8 @@ targets = []
 
 [tool.scikit-build.sdist]
 include = ["/version.txt", "/lib/cimg/CImg.h"]
-exclude = ["/docs", "/examples", "/tests", "/lib/gmic/html", "/lib/gmic/resources", "/lib/cimg"]
+exclude = ["/docs", "/examples", "version_build.py", "/.github",
+    "/lib/gmic/html", "/lib/gmic/resources", "/lib/cimg"]
 reproducible = true
 cmake = false
 
@@ -86,3 +85,25 @@ if.env.DEBUG = true
 if.state = "^(metadata_)?(wheel|editable)$"
 inherit.metadata.version = "append"
 metadata.version.result = "{version}+dbg"
+
+[[tool.scikit-build.overrides]]
+if.env.CIBUILDWHEEL = true
+build-dir = ""
+
+[[tool.scikit-build.overrides]]
+if.env.CIBUILDWHEEL = true
+if.env.GMIC_DEFAULT_FEATURES = false
+cmake.define.GMIC_LIMITED_FEATURES = true
+
+[tool.cibuildwheel]
+build-frontend = "build"
+archs = "auto64"
+build = "cp3{[89],1[012]}-*"
+test-command = "pytest {project}/tests"
+test-requires = "-r ./tests/requirements.txt"
+before-all = "{project}/tools/before_all.sh"
+# AlmaLinux 9 (RHEL-based)
+manylinux-x86_64-image = "quay.io/pypa/manylinux_2_34"
+manylinux-aarch64-image = "quay.io/pypa/manylinux_2_34"
+musllinux-x86_64-image = "quay.io/pypa/musllinux_1_2"
+musllinux-aarch64-image = "quay.io/pypa/musllinux_1_2"

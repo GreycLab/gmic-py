@@ -74,14 +74,32 @@ if __name__ == '__main__':
                             expect=REG_HASH)
     debug(f"Using starting point '{starting_ref}' i.e {starting_hash}")
     stable_ref = starting_ref if args.stable is None else args.stable
-    stable_hash = run_git(['rev-parse', '--short', stable_ref], error="Couldn't resolve revision {}".format(stable_ref),
-                          expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+
+    stable_hash = None
+    try:
+        stable_hash = run_git(['rev-parse', '--short', stable_ref],
+                              error=f"Couldn't resolve revision {stable_ref}",
+                              expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+    except RuntimeError:
+        pass
+    if stable_hash is None:
+        if '/' not in stable_ref:
+            remote_stable_ref = f'origin/{stable_ref}'
+            stable_hash = run_git(['rev-parse', '--short', remote_stable_ref],
+                                  error=f"Couldn't resolve revision {stable_ref} or {remote_stable_ref}",
+                                  expect=REG_HASH) if stable_ref != starting_ref else starting_hash
+            print(f"[WARN] Couldn't resolve {stable_ref}, assuming {remote_stable_ref}. "
+                  "You should create a corresponding local branch", file=sys.stderr)
+            stable_ref = remote_stable_ref
+        else:
+            raise RuntimeError(f"Couldn't resolve stable ref {stable_ref}")
     debug(f"Using stable ref '{stable_ref}' i.e {stable_hash}")
     bottom_ref = args.bottom
     bottom_hash = run_git(['rev-parse', '--short', bottom_ref], error="Couldn't resolve revision {}".format(bottom_ref),
                           expect=REG_HASH)
     debug(f"Using bottom ref '{bottom_ref}' i.e {bottom_hash}")
-    assert run_git(["merge-base", "--is-ancestor", bottom_hash, starting_hash], error=False) is not None
+    run_git(["merge-base", "--is-ancestor", bottom_hash, starting_hash],
+            error=f"Bottom ref ({bottom_ref}) is not an ancestor of the starting ref ({starting_ref})")
 
     tag = run_git(['describe', '--tags', '--abbrev=0', '--match', GIT_DESCRIBE_MATCH, starting_hash],
                   error="Couldn't find a matching version tag")

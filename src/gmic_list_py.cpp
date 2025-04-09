@@ -118,6 +118,7 @@ class gmic_list_py : public gmic_list_base<T> {
     auto operator[](unsigned int i) { return this->get(i); }
     auto operator[](unsigned int i) const { return this->get(i); }
 
+    // TODO fix deprecatied std::iterator
     class iterator : std::iterator<std::forward_iterator_tag, RawItem> {
         gmic_list_py &list;
         unsigned int iter = 0;

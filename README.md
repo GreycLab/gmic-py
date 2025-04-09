@@ -1,7 +1,7 @@
 [![G'MIC Logo](https://gmic.eu/img/logo4.jpg)](https://gmic.eu)
 [![Python Logo](https://www.python.org/static/community_logos/python-logo-master-v3-TM-flattened.png)](https://www.python.org)
 
-####                                                                 
+####                                                                         
 
 #### Python binding for G'MIC - A Full-Featured Open-Source Framework for Image Processing
 
@@ -18,7 +18,8 @@ You can use the `gmic` Python module for projects related to desktop or server-s
 video-games, image procesing.
 
 Note: the package has been completely reworked since version 2.x, the documentation and examples have been removed until
-they're updated again. The "gmic" package on pypi has not been updated yet. The old binding can be found on branch
+they're updated again. The "gmic" package on pypi has not been updated yet. The old binding can be found on
+tag [v2.x](https://github.com/GreycLab/gmic-py/releases/tag/v2.x).
 
 ## Quickstart
 
@@ -63,6 +64,15 @@ All of the above will produce Release builds, set the DEBUG environment variable
 `DEBUG=1 ./version_build.py --build`). Building gmic-py implies building gmic, which can take a while. For developpment
 you can save a lot of time by disabling build isolation (`-n` for build or `--no-build-isolation` for pip), which will
 reuse the same build directory (./build/debug or ./build/release) and thus not rebuild gmic unless necessary.
+
+## G'MIC optional features
+
+Gmic has many optional dependencies that are enabled by default. The python wheel building and repairing process
+involves bundling bundling all of the non-system shared libraries, to make sure the wheel is cross-compatible. For this
+reason, a few of gmic's default optional features are turned off when building with cibuildwheel. This is done through
+the GMIC_LIMITED_FEATURES CMake option, which is off in normal build, and is enabled by skbuild when CIBUILDWHEEL is
+defined. You can disable this behaviour by definint GMIC_DEFAULT_FEATURES. Directly defining the ENABLE_\* options in
+cmake will override any of these settings.
 
 ## Versioning
 
