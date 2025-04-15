@@ -1,9 +1,6 @@
 name: Build wheels and create release
 
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
     inputs:
       merge-main:
@@ -76,11 +73,6 @@ jobs:
           elif ! [ -f "$RESULT" ]; then
             echo "::error::Couldn't find sdist file" && exit 1
           else
-            RESULT_R=${RESULT/.post/.r}
-            if [[ "$RESULT_R" != "$RESULT" ]]; then
-              mv -v "$RESULT" "$RESULT_R"
-              RESULT="$RESULT_R"
-            fi
             echo "::notice::Successfully generated sdist $RESULT"
           fi
           echo "sdist-file=$RESULT" >> $GITHUB_OUTPUT
@@ -189,5 +181,17 @@ jobs:
           TARGET: ${{ env.MERGE_MAIN && steps.merge.outputs.merge-hash || github.ref }}
         run: |
           echo "::notice::Creating release $GMICPY_VERSION:"
+          for FILE in ./dist/*; do
+            FILE_R=${FILE/.post/.r}
+            if [[ "$FILE_R" != "$FILE" ]]; then
+              mv -v "$FILE" "$FILE_R"
+              FILE="$FILE_R"
+            fi
+          done
+          RESULT_R=${RESULT/.post/.r}
+          if [[ "$RESULT_R" != "$RESULT" ]]; then
+            mv -v "$RESULT" "$RESULT_R"
+            RESULT="$RESULT_R"
+          fi
           ls -l1 ./dist/
           gh release create --generate-notes --draft --target "$GITHUB_REF" --repo "$GITHUB_REPOSITORY" "v$GMICPY_VERSION" ./dist/*
