@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 project(gmic-py LANGUAGES C CXX)
 
 find_package(Python 3.8

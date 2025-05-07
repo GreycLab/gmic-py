@@ -168,7 +168,7 @@ class gmic_list_py : public gmic_list_base<T> {
                 else
                     out << ", ";
                 if constexpr (is_same_v<CImg<T> &, Item>) {
-                    out << gmic_image_py<T>::str(item);
+                    out << gmic_image_py::str(item);
                 }
                 else {
                     out << item;

@@ -77,6 +77,10 @@ string inspect(const nb::ndarray<nb::ro> &a)
     return buf.str();
 }
 
+constexpr auto ARRAY_INTERFACE = "__array_interface__";
+constexpr auto DLPACK_INTERFACE = "__dlpack__";
+constexpr auto DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
+
 template <ranges::sized_range V>
 nb::tuple to_tuple(V v, nb::rv_policy rv = nb::rv_policy::automatic)
 {
@@ -122,6 +126,29 @@ template <class... P>
 bool is_f_contig(nb::ndarray<P...> arr)  // NOLINT(*-unnecessary-value-param)
 {
     return is_f_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
+}
+
+template <class t>
+struct dtype_typestr {};
+template <signed_integral t>
+struct dtype_typestr<t> {
+    static constexpr char typestr = 'i';
+};
+template <unsigned_integral t>
+struct dtype_typestr<t> {
+    static constexpr char typestr = 'u';
+};
+template <floating_point t>
+struct dtype_typestr<t> {
+    static constexpr char typestr = 'f';
+};
+
+template <class T>
+void get_typestr(char type[3])
+{
+    type[0] = endian::native == endian::little ? '<' : '>';
+    type[1] = dtype_typestr<T>::typestr;
+    type[2] = '\0';
 }
 
 #include "gmic_image_py.cpp"  // NOLINT(*-suspicious-include)
@@ -213,7 +240,7 @@ try {
     if (auto loglevel = getenv("GMICPY_LOGLEVEL")) {
         auto lvl = atoi(loglevel);
         LOG.set_log_level(lvl);
-        LOG_INFO("Setting log level to " << lvl);
+        LOG_INFO("Setting log level to " << lvl << endl);
     }
 #endif
     {
@@ -278,8 +305,10 @@ try {
         "Sets the debug log level (1=info, 2=debug, 3=trace)");
 #endif
 
+    LOG_INFO("Binding gmic module" << endl);
     LOG_TRACE("Binding gmic.Image class" << endl);
-    gmic_image_py<>::bind(m);
+    gmic_image_py::bind(m);
+    yxc_wrapper::bind(m);
 
     LOG_TRACE("Binding gmic.ImageList class" << endl);
     gmic_list_py<>::bind(m);
