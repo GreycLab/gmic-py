@@ -28,7 +28,10 @@
 #include <type_traits>
 
 #include "logging.h"
-#include "translate_args.h"
+
+#ifdef __GNUC__
+#include <cxxabi.h>
+#endif
 
 namespace gmicpy {
 namespace nb = nanobind;
@@ -314,7 +317,6 @@ try {
             IS_DEFINED(cimg_use_zlib)};
         m.attr("__build_flags__") = flags;
     }
-
 
 #if DEBUG == 1
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");

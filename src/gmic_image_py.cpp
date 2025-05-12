@@ -1,6 +1,15 @@
 // This file is a subpart of gmicpy.cpp, split for readability but part of the
 // same translation unit
 
+template <class... Args, size_t N = 1024>
+static const char *assign_signature_doc(char buf[N], const char *doc,
+                                        const char *func);
+template <class... Args>
+struct assign_signature;
+
+template <class... Args>
+ostream &operator<<(ostream &out, assign_signature<Args...> sig);
+
 class gmic_image_py {
    public:
     using T = gmic_pixel_type;
@@ -21,18 +30,15 @@ class gmic_image_py {
 
     template <class... Args>
     struct can_native_init<
-        enable_if_t<
-            is_same_v<Img,
-                      decltype(Img(declval<trans::translated<Args>>()...))>,
-            Img>,
+        enable_if_t<is_same_v<Img, decltype(Img(declval<Args>()...))>, Img>,
         Args...> : true_type {};
 
     template <class... Args>
     static void new_image(Img *img, Args... args)
     {
         if constexpr (can_native_init<Img, Args...>::value) {
-            LOG_DEBUG(trans::assign_signature<Args...>("new_image") << endl);
-            new (img) Img(trans::translate<Args>(args)...);
+            LOG_DEBUG(assign_signature<Args...>("new_image") << endl);
+            new (img) Img(args...);
         }
         else {
             new (img) Img();
@@ -41,13 +47,12 @@ class gmic_image_py {
     }
 
     template <class... Args>
-    static auto assign(Img &img, Args... args)
-        -> enable_if_t<is_lvalue_reference_v<decltype(Img{}.assign(
-                           declval<trans::translated<Args>>()...))>,
-                       Img &>
+    static auto assign(Img &img, Args... args) -> enable_if_t<
+        is_lvalue_reference_v<decltype(Img{}.assign(declval<Args>()...))>,
+        Img &>
     {
-        LOG_DEBUG(trans::assign_signature<Args...>("assign") << endl);
-        img.assign(trans::translate<Args>(args)...);
+        LOG_DEBUG(assign_signature<Args...>("assign") << endl);
+        img.assign(args...);
         return img;
     }
 
@@ -103,6 +108,11 @@ class gmic_image_py {
             }
         }
         return img;
+    }
+
+    static Img &assign(Img &img, std::filesystem::path path)
+    {
+        return img.load(path.c_str());
     }
 
     template <class Ti, class... P>
@@ -385,11 +395,10 @@ class gmic_image_py {
 #define IMAGE_ASSIGN(funcname, doc, TYPES, ...)                              \
     cls.def("__init__",                                                      \
             static_cast<new_image_t<TYPES>>(&gmic_image_py::new_image),      \
-            trans::assign_signature_doc<TYPES>(doc_buf, doc, "CImg<T>"),     \
+            assign_signature_doc<TYPES>(doc_buf, doc, "CImg<T>"),            \
             ##__VA_ARGS__)                                                   \
         .def(funcname, static_cast<assign_t<TYPES>>(&gmic_image_py::assign), \
-             trans::assign_signature_doc<TYPES>(doc_buf, doc,                \
-                                                "CImg<T>::assign"),          \
+             assign_signature_doc<TYPES>(doc_buf, doc, "CImg<T>::assign"),   \
              nb::rv_policy::none, ##__VA_ARGS__)
         char doc_buf[1024];
 
@@ -416,7 +425,7 @@ class gmic_image_py {
                      ARGS(const char *), "filename"_a);
         IMAGE_ASSIGN("assign_load_file",
                      "Construct image from reading an image file",
-                     ARGS(filesystem::path &), "filename"_a);
+                     ARGS(filesystem::path), "filename"_a);
         IMAGE_ASSIGN(
             "assign_copy_dims",
             "Construct image with dimensions borrowed from another image",
@@ -864,3 +873,73 @@ class yxc_wrapper {
                   << nb::repr(imgclass).c_str() << endl);
     }
 };
+
+template <class... Args>
+struct assign_signature {
+    const char *const func_name;
+    vector<string> arg_names{};
+
+    explicit assign_signature(const char *func_name) : func_name(func_name)
+    {
+#ifdef __GNUC__
+        int status;
+        unsigned long bufsize = 128;
+        char *buf = static_cast<char *>(malloc(sizeof(char) * bufsize));
+        const char *names[] = {typeid(Args).name()...};
+        for (const char *name : names) {
+            char *demang = abi::__cxa_demangle(name, buf, &bufsize, &status);
+            if (demang == nullptr)
+                throw std::runtime_error("Could not demangle function name");
+            arg_names.emplace_back(demang);
+            buf = demang;
+        }
+        free(buf);
+#else
+        arg_names = {typeid(translated<Args>).name()...};
+#endif
+    }
+
+    const vector<string> &get_arg_names() { return arg_names; }
+};
+
+template <class... Args>
+ostream &operator<<(ostream &out, assign_signature<Args...> sig)
+{
+    out << sig.func_name << "(";
+    const auto argtypes = sig.get_arg_names();
+    bool first = true;
+    for (const auto &t : argtypes) {
+        if (first) {
+            first = false;
+        }
+        else {
+            out << ", ";
+        }
+        out << t;
+    }
+    out << ')';
+    return out;
+}
+
+/**
+ * Appends the signature of a given function, with its arguments' types
+ * translated, to a given docstring, and writes it to a char buffer
+ * @tparam Args Types of the pre-translation arguments
+ * @tparam N Buffer size
+ * @param buf Char buffer to write to
+ * @param doc Documentation to append the signature to
+ * @param func Name to use in the signature for the documented function
+ * @return buf passthrough
+ */
+template <class... Args, size_t N>
+static const char *assign_signature_doc(char buf[N], const char *doc,
+                                        const char *func)
+{
+    stringstream out;
+    out.rdbuf()->pubsetbuf(buf, N);
+    out << doc << "\n\n" << "Binds " << assign_signature<Args...>(func);
+    if (out.tellp() >= N)
+        throw out_of_range("Function signature is too long for buffer");
+    buf[out.tellp()] = '\0';
+    return buf;
+}
