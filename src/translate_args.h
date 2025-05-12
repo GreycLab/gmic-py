@@ -66,7 +66,7 @@ template <class gmic_list_py_t>
 /// std::string&lt;char_t&gt; -> const char_t* unwrapping
 template <class string_t>
 [[maybe_unused]] static auto substitute(
-    string_t str)  // NOLINT(*-unnecessary-value-param)
+    string_t &str)  // NOLINT(*-unnecessary-value-param)
     -> decltype(str.c_str())
 {
     return str.c_str();

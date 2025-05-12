@@ -414,6 +414,9 @@ class gmic_image_py {
         IMAGE_ASSIGN("assign_load_file",
                      "Construct image from reading an image file",
                      ARGS(const char *), "filename"_a);
+        IMAGE_ASSIGN("assign_load_file",
+                     "Construct image from reading an image file",
+                     ARGS(filesystem::path &), "filename"_a);
         IMAGE_ASSIGN(
             "assign_copy_dims",
             "Construct image with dimensions borrowed from another image",

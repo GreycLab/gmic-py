@@ -1,15 +1,34 @@
-#include "gmicpy.h"
+// Common headers to include
+
+#include <nanobind/make_iterator.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/operators.h>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/filesystem.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/vector.h>
+
+// Include gmic et CImg after nanobind
+#include <CImg.h>
+#include <gmic.h>
 
 #include <bit>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <ranges>
 #include <source_location>
+#include <sstream>
 #include <type_traits>
 
 #include "logging.h"
+#include "translate_args.h"
 
 namespace gmicpy {
 namespace nb = nanobind;
@@ -296,7 +315,6 @@ try {
         m.attr("__build_flags__") = flags;
     }
 
-    static_assert(trans::is_translatable<string>::value);
 
 #if DEBUG == 1
     m.def("inspect", &inspect, "array"_a, "Inspects a N-dimensional array");
