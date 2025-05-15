@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "gmicpy.hpp"
 #include "utils.hpp"
 
@@ -111,7 +113,7 @@ class gmic_image_py {
         return img;
     }
 
-    static Img &assign(Img &img, std::filesystem::path path)
+    static Img &assign(Img &img, const std::filesystem::path &path)
     {
         return img.load(path.c_str());
     }
@@ -161,7 +163,7 @@ class gmic_image_py {
     /// Returns the strides of the image, in xyzc order
     template <integral I = size_t, bool bytes = false,
               class container = tuple<I, I, I, I>>
-    static container strides(Img &img)
+    static container strides(const Img &img)
     {
         constexpr I S = bytes ? static_cast<I>(sizeof(T)) : 1;
         return {S, S * img.width(), S * img.width() * img.height(),
@@ -170,7 +172,7 @@ class gmic_image_py {
 
     /// Returns the shape of the image, in xyzc order
     template <integral I = size_t, class container = tuple<I, I, I, I>>
-    static container shape(Img &img)
+    static container shape(const Img &img)
     {
         return {static_cast<I>(img.width()), static_cast<I>(img.height()),
                 static_cast<I>(img.depth()), static_cast<I>(img.spectrum())};
@@ -278,7 +280,7 @@ class gmic_image_py {
                              [&](unsigned int i) { return img(x, y, z, i); });
     }
 
-    [[nodiscard]] static string str(Img &img)
+    [[nodiscard]] static string str(const Img &img)
     {
         stringstream out;
         out << img;
@@ -290,7 +292,7 @@ class gmic_image_py {
     template <class... Args>
     using new_image_t = void (*)(Img *, Args...);
 
-    static auto bind(nb::module_ &m)
+    static auto bind(const nb::module_ &m)
     {
         LOG_DEBUG("Binding gmic.Image class" << endl);
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
@@ -411,7 +413,7 @@ class gmic_image_py {
                      ARGS(const char *), "filename"_a);
         IMAGE_ASSIGN("assign_load_file",
                      "Construct image from reading an image file",
-                     ARGS(filesystem::path), "filename"_a);
+                     ARGS(const filesystem::path &), "filename"_a);
         IMAGE_ASSIGN(
             "assign_copy_dims",
             "Construct image with dimensions borrowed from another image",
@@ -433,17 +435,13 @@ class gmic_image_py {
 #undef ARGS
 };
 
-enum cast_policy : uint8_t {
-    THROW,
-    CLAMP,
-    NOCHECK,
-};
-
 class yxc_wrapper {
    public:
     constexpr static auto CLASSNAME = "YXCWrapper";
-    template <size_t ndim, class t, class... P>
-    using NDArray = nb::ndarray<t, nb::device::cpu, nb::ndim<ndim>, P...>;
+    template <class... P>
+    using NDArrayAnyD = nb::ndarray<nb::device::cpu, P...>;
+    template <size_t ndim, class... P>
+    using NDArray = nb::ndarray<nb::device::cpu, nb::ndim<ndim>, P...>;
     template <size_t ndim, class t, class... P>
     using CNDArray =
         nb::ndarray<const t, nb::device::cpu, nb::ndim<ndim>, P...>;
@@ -453,50 +451,70 @@ class yxc_wrapper {
     using TO = uint8_t;  // Default output type
     using ImgPy = gmic_image_py;
     using Img = ImgPy::Img;
-    using DataCaster =
-        function<NDArray<3, nb::ro>(CNDArray<3, T>, cast_policy)>;
+
+    struct data_caster {
+        function<NDArray<3, nb::ro>(const CNDArray<3, T> &, cast_policy)>
+            cast_to;
+        function<void(Img &, size_t, const NDArray<3, nb::ro> &, cast_policy)>
+            cast_from;
+
+        nb::dlpack::dtype dtype;
+        string typestr;
+        static constexpr const char *void_error =
+            "Tried to invoke void type caster";
+
+        template <class t>
+        static data_caster make_caster()
+        {
+            if constexpr (is_void_v<t>)  // For input-only wrapper
+                return data_caster{{}, {}, {}, {}};
+            else
+                return data_caster{&yxc_wrapper::cast_data<T, t>,
+                                   &yxc_wrapper::assign<t>, nb::dtype<t>(),
+                                   get_typestr<t>().data()};
+        }
+    };
+
     Img &img;
     optional<size_t> z;
     optional<NDArray<3, nb::ro>> data = {};
     optional<nb::object> data_handle = {};
     optional<nb::object> bytes = {};
-    string typestr;
     cast_policy cast_pol;
-    DataCaster data_caster;
+    data_caster caster;
 
     static constexpr size_t DIM_NONE = 255;
     static constexpr array<size_t, 3> GMIC_TO_YXC = {1, 0, 3};
     static constexpr array<size_t, 4> YXC_TO_GMIC = {1, 0, DIM_NONE, 2};
 
-    size_t effective_z() const  // NOLINT(*-use-nodiscard)
+    template <bool rtrn = true>
+    conditional_t<rtrn, size_t, void> effective_z()
+        const  // NOLINT(*-use-nodiscard)
     {
-        if (z) {
-            return *z;
-        }
-        if (img.depth() != 1) {
+        if (!z && img.depth() != 1) {
             throw runtime_error(
                 "Must set Z before using wrapper unless image depth is 1");
         }
-        return 0;
+        if constexpr (rtrn)
+            return z ? *z : 0;
+        else
+            return;
     }
 
-    template <class To>
-    static NDArray<3, nb::ro> cast_data(const CNDArray<3, T> ndarray,
+    template <class From, class To>
+    static NDArray<3, nb::ro> cast_data(const CNDArray<3, From> &ndarray,
                                         const cast_policy cast_pol)
     {
-        if constexpr (is_void_v<To>)  // For input-only wrapper
-            throw runtime_error("Void-typed data caster called");
-        else
-            return NDArray<3, nb::ro>(
-                copy_ndarray<3, T, To>(ndarray, cast_pol));
+        return NDArray<3, nb::ro>(
+            copy_ndarray<3, From, To>(ndarray, cast_pol));
     }
 
     template <class... P>
     CNDArray<3, T, P...> reshape_to_yxc()
     {
-        auto ez = effective_z();
+        const auto ez = effective_z();
         auto shape_v = shape_yxc<size_t, false>();
-        auto strides_v = strides_yxc<int64_t, false>();
+        auto strides_v = strides_yxc<int64_t, false>(img);
         return {&img(0, 0, ez, 0), 3, shape_v.data(),
                 cast(img, nb::rv_policy::none), strides_v.data()};
     }
@@ -505,7 +523,7 @@ class yxc_wrapper {
     {
         if (!data) {
             const auto ndarray = reshape_to_yxc();
-            data = data_caster(ndarray, cast_pol);
+            data = caster.cast_to(ndarray, cast_pol);
             LOG_TRACE("Allocated YXC data buffer at "
                       << &data << " (data at " << data->data() << ')' << endl);
             data_handle = data->cast(nb::rv_policy::take_ownership);
@@ -525,24 +543,37 @@ class yxc_wrapper {
         return *bytes;
     }
 
+    static const vector<data_caster> &get_casters()
+    {
+        thread_local vector<data_caster> casters;
+        if (casters.empty()) {
+            casters.push_back(data_caster::make_caster<float>());
+            casters.push_back(data_caster::make_caster<double>());
+            casters.push_back(data_caster::make_caster<uint8_t>());
+            casters.push_back(data_caster::make_caster<uint16_t>());
+            casters.push_back(data_caster::make_caster<uint32_t>());
+            casters.push_back(data_caster::make_caster<uint64_t>());
+            casters.push_back(data_caster::make_caster<int8_t>());
+            casters.push_back(data_caster::make_caster<int16_t>());
+            casters.push_back(data_caster::make_caster<int32_t>());
+            casters.push_back(data_caster::make_caster<int64_t>());
+            casters.push_back(data_caster::make_caster<bool>());
+        }
+        return casters;
+    }
+
    public:
     explicit yxc_wrapper(Img &img, const optional<size_t> z,
-                         const DataCaster &caster, const string &typestr,
-                         cast_policy cast_pol)
-        : img(img),
-          z(z),
-          data_caster(caster),
-          typestr(typestr),
-          cast_pol(cast_pol)
+                         data_caster caster, const cast_policy cast_pol)
+        : img(img), z(z), cast_pol(cast_pol), caster(std::move(caster))
     {
     }
 
     template <class To>
     static yxc_wrapper make_wrapper(Img &img, const optional<size_t> z = {},
-                                    cast_policy cast_pol = CLAMP)
+                                    const cast_policy cast_pol = CLAMP)
     {
-        return yxc_wrapper(img, z, &yxc_wrapper::cast_data<To>,
-                           get_typestr<To>().data(), cast_pol);
+        return yxc_wrapper(img, z, data_caster::make_caster<To>(), cast_pol);
     }
 
     [[nodiscard]] yxc_wrapper with_z(size_t z) const
@@ -551,37 +582,13 @@ class yxc_wrapper {
             throw runtime_error("Depth is already set");
         if (z >= img.depth())
             throw out_of_range("Z out of range for image depth");
-        return yxc_wrapper(img, z, data_caster, typestr, cast_pol);
+        return yxc_wrapper(img, z, caster, cast_pol);
     }
 
     template <class To>
     [[nodiscard]] yxc_wrapper with_dtype() const
     {
         return make_wrapper<To>(img, z, cast_pol);
-    }
-
-    template <class Ti>
-    static tuple<array<size_t, 4>, array<int64_t, 4>> dims_to_gmic(
-        CNDArray<3, Ti> array)
-    {
-        std::array<size_t, 4> oshape;
-        std::array<int64_t, 4> ostrides;
-        ;
-        for (size_t ig = 0; ig < 4; ig++) {
-            auto ix = YXC_TO_GMIC[ig];
-            oshape[ig] = ix == DIM_NONE ? 1 : array.shape(ix);
-            ostrides[ig] = ix == DIM_NONE ? 1 : array.stride(ix);
-        }
-        return {oshape, ostrides};
-    }
-
-    template <class Ti>
-    static CNDArray<4, Ti> ndarray_to_gmic(const CNDArray<3, Ti> &arr)
-    {
-        auto [shape, strides] = dims_to_gmic(arr);
-        return CNDArray<4, Ti>(static_cast<const void *>(arr.data()), 4,
-                               shape.data(), cast(arr, nb::rv_policy::none),
-                               strides.data(), arr.dtype());
     }
 
     template <class... P>
@@ -610,7 +617,7 @@ class yxc_wrapper {
         auto dat = get_data();
 
         nb::dict ai{};
-        ai["typestr"] = typestr;
+        ai["typestr"] = caster.typestr;
         ai["data"] = get_bytes();
         ai["shape"] = make_tuple(dat.shape(0), dat.shape(1), dat.shape(2));
         ai["strides"] = make_tuple(dat.stride(0) * dat.itemsize(),
@@ -632,10 +639,9 @@ class yxc_wrapper {
 
     /// Returns the strides of the image, in yxc order
     template <integral I = size_t, bool tuple = true, bool bytes = false>
-    auto strides_yxc()
+    static auto strides_yxc(const Img &img)
         -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
     {
-        effective_z();
         auto istrides = ImgPy::strides<
             I, bytes,
             conditional_t<tuple, std::tuple<I, I, I, I>, std::array<I, 4>>>(
@@ -648,33 +654,56 @@ class yxc_wrapper {
     auto shape_yxc()
         -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
     {
-        effective_z();
+        effective_z<false>();
         auto ishape = ImgPy::shape<
             I, conditional_t<tuple, std::tuple<I, I, I, I>, std::array<I, 4>>>(
             img);
         return dims_to_xyc<I>(ishape);
     }
 
-    static Img new_image(const NDArray<3, nb::ro> &array)
+    template <class... P>
+    static NDArray<3, P...> to_3d(const NDArrayAnyD<P...> &arr)
+    {
+        if (arr.ndim() == 3) {
+            return NDArray<3, P...>(arr);
+        }
+        if (arr.ndim() == 2) {
+            return NDArray<3, P...>(
+                arr.data(), {arr.shape(0), arr.shape(1), 1}, {},
+                {arr.stride(0), arr.stride(1), 1}, arr.dtype(),
+                arr.device_type(), arr.device_id());
+        }
+        throw nb::next_overload("Array should be 2- or 3-dimensional");
+    }
+
+    static Img new_image(const NDArrayAnyD<nb::ro> &array)
     {
         Img img;
-        make_wrapper<void>(img).assign_try(array, false);
+        return make_wrapper<void>(img).assign_try(array, false);
+    }
+
+    Img &assign_try(const NDArrayAnyD<nb::ro> &arr, const bool samedims) const
+    {
+        if (samedims)
+            effective_z<false>();
+        assign_cast(img, to_3d<nb::ro>(arr), z, samedims, cast_pol);
         return img;
     }
 
-    template <class Ti>
-    Img &assign(const CNDArray<3, Ti> &arr, bool samedims)
+    static void assign_cast(Img &img, const NDArray<3, nb::ro> &arr,
+                            const optional<size_t> z, const bool samedims,
+                            const cast_policy cast_pol)
     {
-        auto same = img.width() == arr.shape(GMIC_TO_YXC[0]) &&
-                    img.height() == arr.shape(GMIC_TO_YXC[1]) &&
-                    img.spectrum() == arr.shape(GMIC_TO_YXC[2]);
+        const auto same = img.width() == arr.shape(GMIC_TO_YXC[0]) &&
+                          img.height() == arr.shape(GMIC_TO_YXC[1]) &&
+                          img.spectrum() == arr.shape(GMIC_TO_YXC[2]);
         size_t ez;
         if (samedims) {
             if (!same)
                 throw invalid_argument(
                     "Can't assign an array with different dimensions, "
                     "use .assign(array, same_dims=False)");
-            ez = effective_z();
+            ez = *z;
         }
         else {
             if (z) {
@@ -683,179 +712,34 @@ class yxc_wrapper {
             }
             if (!same || img.depth() != 1) {
                 img.assign(arr.shape(YXC_TO_GMIC[0]),
-                           arr.shape(YXC_TO_GMIC[1]), 1, YXC_TO_GMIC[2]);
+                           arr.shape(YXC_TO_GMIC[1]), 1,
+                           arr.shape(YXC_TO_GMIC[3]));
             }
             ez = 0;
         }
+        for (const auto &caster : get_casters()) {
+            if (arr.dtype() == caster.dtype) {
+                caster.cast_from(img, ez, arr, cast_pol);
+                return;
+            }
+        }
+        throw invalid_argument("Invalid array type");
+    }
 
+    template <class Ti>
+    static void assign(Img &img, const size_t z,
+                       const NDArray<3, nb::ro> &iarr, cast_policy cast_pol)
+    {
+        if (iarr.dtype() != nb::dtype<Ti>())
+            throw runtime_error("Invalid array dtype passed to assign");
+        const CNDArray<3, Ti> arr(iarr);
         const Ti *src = arr.data();
         const auto istrides = arr.stride_ptr();
         const auto ishape = arr.shape_ptr();
-        const auto ostrides = strides_yxc<int64_t, false>();
+        const auto ostrides = strides_yxc<int64_t, false>(img);
 
-        copy_ndarray_data<3, Ti, T>(src, istrides, ishape, &img(0, 0, ez, 0),
+        copy_ndarray_data<3, Ti, T>(src, istrides, ishape, &img(0, 0, z, 0),
                                     ostrides.data(), cast_pol);
-
-        return img;
-    }
-
-    Img &assign_try(const NDArray<3, nb::ro> &arr, const bool samedims)
-    {
-#define ASSIGN_DTYPE(DTYPE)                \
-    if (arr.dtype() == nb::dtype<DTYPE>()) \
-        return assign<DTYPE>(CNDArray<3, DTYPE>(arr), samedims);
-        ASSIGN_DTYPE(float);
-        ASSIGN_DTYPE(double);
-        ASSIGN_DTYPE(uint8_t);
-        ASSIGN_DTYPE(uint16_t);
-        ASSIGN_DTYPE(uint32_t);
-        ASSIGN_DTYPE(uint64_t);
-        ASSIGN_DTYPE(int8_t);
-        ASSIGN_DTYPE(int16_t);
-        ASSIGN_DTYPE(int32_t);
-        ASSIGN_DTYPE(int64_t);
-        ASSIGN_DTYPE(bool);
-#undef ASSIGN_DTYPE
-        throw invalid_argument(
-            "Invalid array type. Supported: float, double, [u]int8-64");
-    }
-
-    /**
-     * Copies a ndarray. Will reorder the data so that the data is
-     * C-contiguous.
-     * @tparam ndim number of dimensions
-     * @tparam Ti Input datatype
-     * @tparam To Output datatype
-     * @param array Input array whose data is <strong>in SDHW (gmic)
-     * order</strong>
-     * @param policy Cast policy (error / clamp / ignore)
-     * @param deleter Whether or not to add a capsule owner that will take care
-     * of freeing memory
-     * @return A copy of the ndarray with the same data for a given set of
-     * coordinates, but reordered C-style
-     */
-    template <size_t ndim, class Ti, class To = Ti, class... P>
-    static NDArray<ndim, To, P...> copy_ndarray(
-        const CNDArray<ndim, Ti, P...> &array, const cast_policy policy,
-        bool deleter = true)
-    {
-        const Ti *src = array.data();
-        To *dest = new To[array.size()];
-        LOG_TRACE("Allocating " << static_cast<void *>(dest) << endl);
-        nb::capsule owner(dest, deleter ? [](void *p) noexcept {
-            LOG_TRACE("Releasing " << p << endl);
-            delete[] static_cast<float *>(p);
-        } : [](void *) noexcept {});
-        size_t shape[ndim];
-        for (int64_t i = 0; i < ndim; ++i) {
-            shape[i] = array.shape(i);
-        }
-
-        nb::ndarray<To, nb::device::cpu, nb::ndim<ndim>, P...> outarray(
-            dest, ndim, shape, owner);
-
-        copy_ndarray_data<ndim, Ti, To>(src, array.stride_ptr(),
-                                        array.shape_ptr(), dest,
-                                        outarray.stride_ptr(), policy);
-
-        return outarray;
-    }
-
-    template <size_t ndim, class Ti, class To>
-    static void copy_ndarray_data(const Ti *src, const int64_t *istrides,
-                                  const int64_t *shape, To *dst,
-                                  const int64_t *ostrides,
-                                  const cast_policy policy)
-    {
-        int64_t _ostrides[ndim];
-        if (ostrides == nullptr) {
-            for (int64_t s = 1, i = 0; i < ndim; ++i) {
-                _ostrides[i] = s;
-                s *= static_cast<int64_t>(shape[i]);
-            }
-            ostrides = _ostrides;
-        }
-        switch (policy) {  // Runtime-to-compiletime for performance reasons
-            case THROW:
-                copy_ndarray_data<ndim, Ti, To, THROW>(src, istrides, shape,
-                                                       dst, ostrides);
-                break;
-            case CLAMP:
-                copy_ndarray_data<ndim, Ti, To, CLAMP>(src, istrides, shape,
-                                                       dst, ostrides);
-                break;
-            case NOCHECK:
-                copy_ndarray_data<ndim, Ti, To, NOCHECK>(src, istrides, shape,
-                                                         dst, ostrides);
-                break;
-            default:
-                abort();
-        }
-    }
-
-    template <size_t ndim, class Ti, class To, cast_policy policy>
-    static void copy_ndarray_data(const Ti *src, const int64_t *istrides,
-                                  const int64_t *shape, To *dst,
-                                  const int64_t *ostrides)
-    {
-#define IF_THROW_OR_CLAMP(cond, throwerr, clampval) \
-    if (cond) {                                     \
-        if constexpr (policy == THROW) {            \
-            err = (throwerr);                       \
-        }                                           \
-        else {                                      \
-            d = (clampval);                         \
-        }                                           \
-    }
-        for (size_t a = 0; a < shape[0]; a++) {
-            const size_t ioff = a * istrides[0], ooff = a * ostrides[0];
-            if constexpr (ndim > 1) {
-                copy_ndarray_data<ndim - 1, Ti, To, policy>(
-                    src + ioff, istrides + 1, shape + 1, dst + ooff,
-                    ostrides + 1);
-            }
-            else {
-                auto s = src[ioff];
-                auto d = static_cast<To>(s);
-                if constexpr (!is_same_v<Ti, To> && !is_floating_point_v<To> &&
-                              policy != NOCHECK) {
-                    auto cs = s;
-                    if constexpr (is_floating_point_v<Ti>) {
-                        cs = std::trunc(cs);
-                    }
-                    if (static_cast<Ti>(d) != cs) {
-                        constexpr numeric_limits<To> olims;
-                        const char *err = nullptr;
-                        if constexpr (is_floating_point_v<Ti>) {
-                            IF_THROW_OR_CLAMP(
-                                isinf(s),
-                                "Tried casting infinite value to "
-                                "an integer type",
-                                s > 0 ? olims.max() : olims.min())
-                            else IF_THROW_OR_CLAMP(!isfinite(s),
-                                                   "Tried casting non-finite "
-                                                   "value to an integer type",
-                                                   0);
-                        }
-                        IF_THROW_OR_CLAMP(
-                            s > olims.max(),
-                            "Value too large for destination type",
-                            olims.max())
-                        else IF_THROW_OR_CLAMP(
-                            s < olims.min(),
-                            olims.min() == 0
-                                ? "Tried casting negative value to "
-                                  "unsigned type"
-                                : "Value too low for destination type",
-                            olims.min());
-                        if constexpr (policy == THROW)
-                            throw out_of_range(err);
-                    }
-                }
-                dst[ooff] = d;
-            }
-        }
-#undef IF_THROW_OR_CLAMP
     }
 
     static void bind(nb::class_<Img> &imgcls)
