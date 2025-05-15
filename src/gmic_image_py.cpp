@@ -1,14 +1,15 @@
-// This file is a subpart of gmicpy.cpp, split for readability but part of the
-// same translation unit
+#include "gmicpy.hpp"
+#include "utils.hpp"
 
-template <class... Args, size_t N = 1024>
-static const char *assign_signature_doc(char buf[N], const char *doc,
-                                        const char *func);
-template <class... Args>
-struct assign_signature;
+namespace gmicpy {
+namespace nb = nanobind;
+using namespace nanobind::literals;
+using namespace std;
+using namespace cimg_library;
 
-template <class... Args>
-ostream &operator<<(ostream &out, assign_signature<Args...> sig);
+constexpr auto ARRAY_INTERFACE = "__array_interface__";
+constexpr auto DLPACK_INTERFACE = "__dlpack__";
+constexpr auto DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
 
 class gmic_image_py {
    public:
@@ -148,10 +149,7 @@ class gmic_image_py {
     {
         LOG_TRACE();
         nb::dict ai{};
-        char type[3];
-        get_typestr<T>(type);
-        ai["typestr"] =
-            cast(string(type) + to_string(sizeof(T)), nb::rv_policy::copy);
+        ai["typestr"] = get_typestr<T>().data();
         ai["data"] =
             nb::make_tuple(reinterpret_cast<uintptr_t>(img.data()), false);
         ai["shape"] = shape<size_t>(img);
@@ -282,21 +280,8 @@ class gmic_image_py {
 
     [[nodiscard]] static string str(Img &img)
     {
-        char pyimgloc[128] = "";
-#if DEBUG == 1
-        if (const nb::object pyimg = nb::find(img); pyimg.is_valid()) {
-            sprintf(pyimgloc, ", nb::object: %p", pyimg.ptr());
-        }
-        else {
-            sprintf(pyimgloc, ", nb::object: none");
-        }
-#endif
         stringstream out;
-        out << "<" << nb::type_name(nb::type<Img>()).c_str() << " at "
-            << static_cast<const void *>(&img)
-            << ", data at: " << static_cast<const void *>(img.data())
-            << pyimgloc << ", w×h×d×s=" << img.width() << "×" << img.height()
-            << "×" << img.depth() << "×" << img.spectrum() << ">";
+        out << img;
         return out.str();
     }
 
@@ -305,8 +290,9 @@ class gmic_image_py {
     template <class... Args>
     using new_image_t = void (*)(Img *, Args...);
 
-    static void bind(nb::module_ &m)
+    static auto bind(nb::module_ &m)
     {
+        LOG_DEBUG("Binding gmic.Image class" << endl);
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
         auto cls =
             nb::class_<Img>(m, CLASSNAME, "GMIC Image")
@@ -440,6 +426,8 @@ class gmic_image_py {
                      "different order for dimensions (yxc), so this method "
                      "will not work as expected with such libraries.",
                      ARGS(CTNDArray<>), "array"_a);
+
+        return cls;
     }
 #undef IMAGE_ASSIGN
 #undef ARGS
@@ -452,19 +440,35 @@ enum cast_policy : uint8_t {
 };
 
 class yxc_wrapper {
+   public:
+    constexpr static auto CLASSNAME = "YXCWrapper";
+    template <size_t ndim, class t, class... P>
+    using NDArray = nb::ndarray<t, nb::device::cpu, nb::ndim<ndim>, P...>;
+    template <size_t ndim, class t, class... P>
+    using CNDArray =
+        nb::ndarray<const t, nb::device::cpu, nb::ndim<ndim>, P...>;
+
+   private:
     using T = gmic_pixel_type;
     using TO = uint8_t;  // Default output type
     using ImgPy = gmic_image_py;
     using Img = ImgPy::Img;
+    using DataCaster =
+        function<NDArray<3, nb::ro>(CNDArray<3, T>, cast_policy)>;
     Img &img;
     optional<size_t> z;
-    cast_policy cast_pol = THROW;
+    optional<NDArray<3, nb::ro>> data = {};
+    optional<nb::object> data_handle = {};
+    optional<nb::object> bytes = {};
+    string typestr;
+    cast_policy cast_pol;
+    DataCaster data_caster;
 
     static constexpr size_t DIM_NONE = 255;
     static constexpr array<size_t, 3> GMIC_TO_YXC = {1, 0, 3};
     static constexpr array<size_t, 4> YXC_TO_GMIC = {1, 0, DIM_NONE, 2};
 
-    size_t effective_z() const
+    size_t effective_z() const  // NOLINT(*-use-nodiscard)
     {
         if (z) {
             return *z;
@@ -476,23 +480,84 @@ class yxc_wrapper {
         return 0;
     }
 
-   public:
-    constexpr static auto CLASSNAME = "YXCWrapper";
-    template <size_t ndim, class t, class... P>
-    using NDArray = nb::ndarray<t, nb::device::cpu, nb::ndim<ndim>, P...>;
-    template <size_t ndim, class t, class... P>
-    using CNDArray =
-        nb::ndarray<const t, nb::device::cpu, nb::ndim<ndim>, P...>;
-
-    yxc_wrapper(Img &img, const optional<size_t> z = {}) : img(img), z(z) {}
-
-    yxc_wrapper with_z(size_t z)
+    template <class To>
+    static NDArray<3, nb::ro> cast_data(const CNDArray<3, T> ndarray,
+                                        const cast_policy cast_pol)
     {
-        if (z)
+        if constexpr (is_void_v<To>)  // For input-only wrapper
+            throw runtime_error("Void-typed data caster called");
+        else
+            return NDArray<3, nb::ro>(
+                copy_ndarray<3, T, To>(ndarray, cast_pol));
+    }
+
+    template <class... P>
+    CNDArray<3, T, P...> reshape_to_yxc()
+    {
+        auto ez = effective_z();
+        auto shape_v = shape_yxc<size_t, false>();
+        auto strides_v = strides_yxc<int64_t, false>();
+        return {&img(0, 0, ez, 0), 3, shape_v.data(),
+                cast(img, nb::rv_policy::none), strides_v.data()};
+    }
+
+    auto &get_data()
+    {
+        if (!data) {
+            const auto ndarray = reshape_to_yxc();
+            data = data_caster(ndarray, cast_pol);
+            LOG_TRACE("Allocated YXC data buffer at "
+                      << &data << " (data at " << data->data() << ')' << endl);
+            data_handle = data->cast(nb::rv_policy::take_ownership);
+        }
+        else if (!data_handle->is_valid())
+            throw runtime_error("");
+        return *data;
+    }
+
+    auto &get_bytes()
+    {
+        if (!bytes) {
+            auto dat = get_data();
+            bytes = cast(nb::bytes(dat.data(), dat.size() * dat.itemsize()),
+                         nanobind::rv_policy::reference_internal, dat.cast());
+        }
+        return *bytes;
+    }
+
+   public:
+    explicit yxc_wrapper(Img &img, const optional<size_t> z,
+                         const DataCaster &caster, const string &typestr,
+                         cast_policy cast_pol)
+        : img(img),
+          z(z),
+          data_caster(caster),
+          typestr(typestr),
+          cast_pol(cast_pol)
+    {
+    }
+
+    template <class To>
+    static yxc_wrapper make_wrapper(Img &img, const optional<size_t> z = {},
+                                    cast_policy cast_pol = CLAMP)
+    {
+        return yxc_wrapper(img, z, &yxc_wrapper::cast_data<To>,
+                           get_typestr<To>().data(), cast_pol);
+    }
+
+    [[nodiscard]] yxc_wrapper with_z(size_t z) const
+    {
+        if (this->z)
             throw runtime_error("Depth is already set");
         if (z >= img.depth())
             throw out_of_range("Z out of range for image depth");
-        return yxc_wrapper(img, z);
+        return yxc_wrapper(img, z, data_caster, typestr, cast_pol);
+    }
+
+    template <class To>
+    [[nodiscard]] yxc_wrapper with_dtype() const
+    {
+        return make_wrapper<To>(img, z, cast_pol);
     }
 
     template <class Ti>
@@ -520,19 +585,18 @@ class yxc_wrapper {
     }
 
     template <class... P>
-    CNDArray<3, T, P...> as_ndarray()
-    {
-        auto ez = effective_z();
-        auto shape_v = shape<size_t, false>();
-        auto strides_v = strides<int64_t, false>();
-        return {&img(0, 0, ez, 0), 3, shape_v.data(), nb::handle(),
-                strides_v.data()};
-    }
-
-    template <class To, class... P>
     auto to_ndarray()
     {
-        return copy_ndarray<3, T, To, P...>(as_ndarray<P...>(), cast_pol);
+        auto dat = get_data();
+        if constexpr (is_same_v<NDArray<3, nb::ro>,
+                                NDArray<3, nb::ro, P...>>) {
+            return dat;
+        }
+        else {
+            const auto parent = cast(dat);
+            return cast(NDArray<3, nb::ro>(dat),
+                        nanobind::rv_policy::reference_internal, parent);
+        }
     }
 
     static auto dlpack_device(Img &)
@@ -540,34 +604,19 @@ class yxc_wrapper {
         return nb::make_tuple(nb::device::cpu::value, 0);
     }
 
-    template <class To>
-    static auto dlpack(Img &img)
-    {
-        LOG_TRACE();
-        return to_ndarray<To>(img);
-    }
-
-    template <class To>
     nb::object array_interface()
     {
         LOG_TRACE();
-        const auto iarr = as_ndarray<>();
-        auto oarr = copy_ndarray<3, T, To>(iarr, cast_pol);
-        auto shp = shape<size_t, false>();
-        auto strds = strides<size_t, false, false>();
+        auto dat = get_data();
 
         nb::dict ai{};
-        char type[3];
-        get_typestr<To>(type);
-        ai["typestr"] =
-            cast(string(type) + to_string(sizeof(T)), nb::rv_policy::copy);
-        ai["data"] =
-            nb::make_tuple(reinterpret_cast<uintptr_t>(oarr.data()), false);
-        ai["shape"] = tuple_cat(shp);
-        for (auto &i : strds) i *= sizeof(To);
-        ai["strides"] = tuple_cat(strds);
+        ai["typestr"] = typestr;
+        ai["data"] = get_bytes();
+        ai["shape"] = make_tuple(dat.shape(0), dat.shape(1), dat.shape(2));
+        ai["strides"] = make_tuple(dat.stride(0) * dat.itemsize(),
+                                   dat.stride(1) * dat.itemsize(),
+                                   dat.stride(2) * dat.itemsize());
         ai["version"] = 3;
-        ai["__array__"] = nb::cast(oarr, nb::rv_policy::take_ownership);
         return ai;
     }
 
@@ -583,7 +632,7 @@ class yxc_wrapper {
 
     /// Returns the strides of the image, in yxc order
     template <integral I = size_t, bool tuple = true, bool bytes = false>
-    auto strides()
+    auto strides_yxc()
         -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
     {
         effective_z();
@@ -596,7 +645,8 @@ class yxc_wrapper {
 
     /// Returns the shape of the image, in yxc order
     template <integral I = size_t, bool tuple = true>
-    auto shape() -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
+    auto shape_yxc()
+        -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
     {
         effective_z();
         auto ishape = ImgPy::shape<
@@ -605,18 +655,16 @@ class yxc_wrapper {
         return dims_to_xyc<I>(ishape);
     }
 
-    template <class Ti>
-    static Img new_image(const CNDArray<3, Ti> &array)
+    static Img new_image(const NDArray<3, nb::ro> &array)
     {
         Img img;
-        yxc_wrapper(img).assign<Ti>(array);
+        make_wrapper<void>(img).assign_try(array, false);
         return img;
     }
 
     template <class Ti>
-    Img &assign(const CNDArray<3, Ti> &arr, const bool samedims = true)
+    Img &assign(const CNDArray<3, Ti> &arr, bool samedims)
     {
-        auto arr4 = ndarray_to_gmic(arr);
         auto same = img.width() == arr.shape(GMIC_TO_YXC[0]) &&
                     img.height() == arr.shape(GMIC_TO_YXC[1]) &&
                     img.spectrum() == arr.shape(GMIC_TO_YXC[2]);
@@ -634,24 +682,24 @@ class yxc_wrapper {
                     "Can't assign new dims to array with Z set");
             }
             if (!same || img.depth() != 1) {
-                img.assign(arr4.shape(0), arr4.shape(1), arr4.shape(2),
-                           arr4.shape(3));
+                img.assign(arr.shape(YXC_TO_GMIC[0]),
+                           arr.shape(YXC_TO_GMIC[1]), 1, YXC_TO_GMIC[2]);
             }
             ez = 0;
         }
 
-        const Ti *src = arr4.data();
-        const auto istrides = arr4.stride_ptr();
-        const auto ishape = arr4.shape_ptr();
-        const auto ostrides = strides<int64_t, false>();
+        const Ti *src = arr.data();
+        const auto istrides = arr.stride_ptr();
+        const auto ishape = arr.shape_ptr();
+        const auto ostrides = strides_yxc<int64_t, false>();
 
-        copy_ndarray_data<4, Ti, T>(src, istrides, ishape, &img(0, 0, ez, 0),
+        copy_ndarray_data<3, Ti, T>(src, istrides, ishape, &img(0, 0, ez, 0),
                                     ostrides.data(), cast_pol);
 
         return img;
     }
 
-    Img &assign(const NDArray<3, nb::ro> &arr, const bool samedims)
+    Img &assign_try(const NDArray<3, nb::ro> &arr, const bool samedims)
     {
 #define ASSIGN_DTYPE(DTYPE)                \
     if (arr.dtype() == nb::dtype<DTYPE>()) \
@@ -670,17 +718,6 @@ class yxc_wrapper {
 #undef ASSIGN_DTYPE
         throw invalid_argument(
             "Invalid array type. Supported: float, double, [u]int8-64");
-    }
-
-    template <class Ti>
-    bool same_dims_as(const CNDArray<3, Ti> &arr)
-    {
-        auto shp = shape<size_t, false>();
-        for (size_t ix = 0; ix < 3; ix++) {
-            if (shp[GMIC_TO_YXC[ix]] != arr.shape(ix))
-                return false;
-        }
-        return true;
     }
 
     /**
@@ -704,24 +741,24 @@ class yxc_wrapper {
     {
         const Ti *src = array.data();
         To *dest = new To[array.size()];
-        LOG_TRACE("Allocating " << dest << endl);
+        LOG_TRACE("Allocating " << static_cast<void *>(dest) << endl);
         nb::capsule owner(dest, deleter ? [](void *p) noexcept {
             LOG_TRACE("Releasing " << p << endl);
             delete[] static_cast<float *>(p);
         } : [](void *) noexcept {});
         size_t shape[ndim];
-        int64_t ostrides[ndim];
-        for (int64_t s = 1, i = 0; i < ndim; ++i) {
-            ostrides[i] = s;
-            s *= static_cast<int64_t>(shape[i] = array.shape(i));
+        for (int64_t i = 0; i < ndim; ++i) {
+            shape[i] = array.shape(i);
         }
 
-        copy_ndarray_data<ndim, Ti, To>(src, array.stride_ptr(),
-                                        array.shape_ptr(), dest, ostrides,
-                                        policy);
+        nb::ndarray<To, nb::device::cpu, nb::ndim<ndim>, P...> outarray(
+            dest, ndim, shape, owner);
 
-        return nb::ndarray<To, nb::device::cpu, nb::ndim<ndim>, P...>{
-            dest, ndim, shape, owner};
+        copy_ndarray_data<ndim, Ti, To>(src, array.stride_ptr(),
+                                        array.shape_ptr(), dest,
+                                        outarray.stride_ptr(), policy);
+
+        return outarray;
     }
 
     template <size_t ndim, class Ti, class To>
@@ -821,125 +858,60 @@ class yxc_wrapper {
 #undef IF_THROW_OR_CLAMP
     }
 
-    static void bind(nb::module_ &m)
+    static void bind(nb::class_<Img> &imgcls)
     {
-        nb::class_<Img> imgclass = m.attr(ImgPy::CLASSNAME);
+        LOG_DEBUG("Binding gmic.Image.YXCWrapper class" << endl);
         char doc[1024];
         snprintf(doc, size(doc),
                  "Wrapper around a gmic.%s to exchange with "
                  "libraries using YXC axe order",
                  ImgPy::CLASSNAME);
         auto cls =
-            nb::class_<yxc_wrapper>(imgclass, CLASSNAME, doc)
+            nb::class_<yxc_wrapper>(imgcls, CLASSNAME, doc)
                 .def_prop_ro(
                     "image", [](const yxc_wrapper &wrap) { return wrap.img; },
                     nb::rv_policy::reference_internal)
                 .def_ro("z", &yxc_wrapper::z)
                 .def("__getitem__", &yxc_wrapper::with_z, "z"_a)
-                .def(DLPACK_INTERFACE, &yxc_wrapper::to_ndarray<TO>,
-                     nb::rv_policy::reference)
+                .def(DLPACK_INTERFACE, &yxc_wrapper::to_ndarray<>)
                 .def(DLPACK_DEVICE_INTERFACE, &yxc_wrapper::dlpack_device)
-                .def_prop_ro(ARRAY_INTERFACE,
-                             &yxc_wrapper::array_interface<TO>,
+                .def_prop_ro(ARRAY_INTERFACE, &yxc_wrapper::array_interface,
                              nb::rv_policy::reference)
-                .def("to_numpy", &yxc_wrapper::to_ndarray<TO, nb::numpy>,
-                     nb::rv_policy::reference,
+                .def("to_numpy", &yxc_wrapper::to_ndarray<nb::numpy>,
                      "Returns a copy of the underlying data as a Numpy "
                      "NDArray")
+                .def(
+                    "tobytes", &yxc_wrapper::get_bytes,
+                    "Returns the image data converted to the wrapper dtype as "
+                    "a bytes object")
+                .def("to_numpy_raw", &yxc_wrapper::reshape_to_yxc<nb::numpy>,
+                     "Returns a direct reshaped view into the image data")
                 .def_prop_ro(
-                    "shape", &yxc_wrapper::shape<size_t, true>,
+                    "shape", &yxc_wrapper::shape_yxc<size_t, true>,
                     "Returns the shape (size along each axis) tuple of the "
                     "image in xyzc order")
-                .def_prop_ro(
-                    "strides", &yxc_wrapper::strides<size_t, true, false>,
-                    "Returns the stride tuple (step size along each axis) "
-                    "of the image in xyzc order")
-                .def("assign", &yxc_wrapper::assign<float>,
-                     "array"_a.noconvert(), "same_dims"_a = true,
-                     nb::rv_policy::none)
-                .def("assign", &yxc_wrapper::assign<uint8_t>,
-                     "array"_a.noconvert(), "same_dims"_a = true,
-                     nb::rv_policy::none)
-                .def("assign", &yxc_wrapper::assign<float>, "array"_a,
-                     "same_dims"_a = true, nb::rv_policy::none);
-        imgclass
+                .def("assign", &yxc_wrapper::assign_try,
+                     "Assigns the given array-compatible object's data to the "
+                     "image",
+                     "array"_a, "same_dims"_a = true, nb::rv_policy::none);
+
+        imgcls
             .def_prop_ro(
-                "yxc", [](Img &img) { return yxc_wrapper(img); }, doc)
+                "yxc", [](Img &img) { return make_wrapper<TO>(img); }, doc)
             .def_static(
-                "from_yxc", &yxc_wrapper::new_image<float>,
+                "from_yxc", &yxc_wrapper::new_image,
                 "Constructs an image from the given XYC-ordered ndarray",
                 "array"_a);
-        LOG_DEBUG("Attaching yxc methods to class "
-                  << nb::repr(imgclass).c_str() << endl);
+        LOG_DEBUG("Attaching yxc methods to class " << nb::repr(imgcls).c_str()
+                                                    << endl);
     }
 };
 
-template <class... Args>
-struct assign_signature {
-    const char *const func_name;
-    vector<string> arg_names{};
-
-    explicit assign_signature(const char *func_name) : func_name(func_name)
-    {
-#ifdef __GNUC__
-        int status;
-        unsigned long bufsize = 128;
-        char *buf = static_cast<char *>(malloc(sizeof(char) * bufsize));
-        const char *names[] = {typeid(Args).name()...};
-        for (const char *name : names) {
-            char *demang = abi::__cxa_demangle(name, buf, &bufsize, &status);
-            if (demang == nullptr)
-                throw std::runtime_error("Could not demangle function name");
-            arg_names.emplace_back(demang);
-            buf = demang;
-        }
-        free(buf);
-#else
-        arg_names = {typeid(translated<Args>).name()...};
-#endif
-    }
-
-    const vector<string> &get_arg_names() { return arg_names; }
-};
-
-template <class... Args>
-ostream &operator<<(ostream &out, assign_signature<Args...> sig)
+void bind_gmic_image(nanobind::module_ &m)
 {
-    out << sig.func_name << "(";
-    const auto argtypes = sig.get_arg_names();
-    bool first = true;
-    for (const auto &t : argtypes) {
-        if (first) {
-            first = false;
-        }
-        else {
-            out << ", ";
-        }
-        out << t;
-    }
-    out << ')';
-    return out;
+    auto imgcls = gmic_image_py::bind(m);
+
+    yxc_wrapper::bind(imgcls);
 }
 
-/**
- * Appends the signature of a given function, with its arguments' types
- * translated, to a given docstring, and writes it to a char buffer
- * @tparam Args Types of the pre-translation arguments
- * @tparam N Buffer size
- * @param buf Char buffer to write to
- * @param doc Documentation to append the signature to
- * @param func Name to use in the signature for the documented function
- * @return buf passthrough
- */
-template <class... Args, size_t N>
-static const char *assign_signature_doc(char buf[N], const char *doc,
-                                        const char *func)
-{
-    stringstream out;
-    out.rdbuf()->pubsetbuf(buf, N);
-    out << doc << "\n\n" << "Binds " << assign_signature<Args...>(func);
-    if (out.tellp() >= N)
-        throw out_of_range("Function signature is too long for buffer");
-    buf[out.tellp()] = '\0';
-    return buf;
-}
+}  // namespace gmicpy

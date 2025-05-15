@@ -1,37 +1,4 @@
-// Common headers to include
-
-#include <nanobind/make_iterator.h>
-#include <nanobind/nanobind.h>
-#include <nanobind/ndarray.h>
-#include <nanobind/operators.h>
-#include <nanobind/stl/array.h>
-#include <nanobind/stl/filesystem.h>
-#include <nanobind/stl/map.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/tuple.h>
-#include <nanobind/stl/vector.h>
-
-// Include gmic et CImg after nanobind
-#include <CImg.h>
-#include <gmic.h>
-
-#include <bit>
-#include <filesystem>
-#include <functional>
-#include <iostream>
-#include <memory>
-#include <optional>
-#include <ranges>
-#include <source_location>
-#include <sstream>
-#include <type_traits>
-
-#include "logging.h"
-
-#ifdef __GNUC__
-#include <cxxabi.h>
-#endif
+#include "gmicpy.hpp"
 
 namespace gmicpy {
 namespace nb = nanobind;
@@ -39,21 +6,7 @@ using namespace nanobind::literals;
 using namespace std;
 using namespace cimg_library;
 
-using Level = DebugLogger::Level;
-static DebugLogger LOG;
-#define LOG_VA_ELSE(arg, ...) arg
-#define LOG_(level, ...)                                                    \
-    {                                                                       \
-        static constexpr function_name_stripped<strlen(                     \
-            source_location::current().function_name())>                    \
-            fname(source_location::current().function_name());              \
-        LOG << level                                                        \
-            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< ": " << __VA_ARGS__, ) \
-                                       << std::endl);                       \
-    }
-#define LOG_INFO(...) LOG_(Level::Info __VA_OPT__(, __VA_ARGS__))
-#define LOG_DEBUG(...) LOG_(Level::Debug __VA_OPT__(, __VA_ARGS__))
-#define LOG_TRACE(...) LOG_(Level::Trace __VA_OPT__(, __VA_ARGS__))
+DebugLogger LOG{};
 
 /// Debug function
 string inspect(const nb::ndarray<nb::ro> &a)
@@ -99,148 +52,23 @@ string inspect(const nb::ndarray<nb::ro> &a)
     return buf.str();
 }
 
-constexpr auto ARRAY_INTERFACE = "__array_interface__";
-constexpr auto DLPACK_INTERFACE = "__dlpack__";
-constexpr auto DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
-
-template <ranges::sized_range V>
-nb::tuple to_tuple(V v, nb::rv_policy rv = nb::rv_policy::automatic)
+ostream &operator<<(ostream &out, const CImg<> &img)
 {
-    const size_t size = v.size();
-    auto result =
-        nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
-    size_t i = 0;
-    for (const auto &e : v) {
-        PyTuple_SetItem(result.ptr(), i++, nb::cast(e, rv).ptr());
+    out << "<" << nb::type_name(nb::type<CImg<>>()).c_str() << " at " << &img
+        << ", data at: " << img.data();
+#if DEBUG == 1
+    out << ", nb::object: ";
+    if (const nb::object pyimg = nb::find(img); pyimg.is_valid()) {
+        out << pyimg.ptr();
     }
-
-    return result;
+    else {
+        out << "none";
+    }
+#endif
+    out << ", w×h×d×s=" << img.width() << "×" << img.height() << "×"
+        << img.depth() << "×" << img.spectrum() << ">";
+    return out;
 }
-
-template <class F, integral I, class V = decltype(declval<F>()(declval<I>()))>
-    requires std::is_invocable_r_v<V, F, I>
-nb::tuple to_tuple_func(I size, F get,
-                        nb::rv_policy rv = nb::rv_policy::automatic)
-{
-    auto result =
-        nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
-    for (I i = 0; i < size; ++i) {
-        auto ptr = nb::cast(get(i), rv);
-        PyTuple_SetItem(result.ptr(), i, ptr.release().ptr());
-    }
-
-    return result;
-}
-
-template <class Sh, class St>
-bool is_f_contig(unsigned short ndim, Sh *shape, St *strides)
-{
-    decltype(*shape * *strides) acc = 1;
-    for (int i = 0; i < ndim; ++i) {
-        if (strides[i] != acc)
-            return false;
-        acc *= shape[i];
-    }
-    return true;
-}
-
-template <class... P>
-bool is_f_contig(nb::ndarray<P...> arr)  // NOLINT(*-unnecessary-value-param)
-{
-    return is_f_contig(arr.ndim(), arr.shape_ptr(), arr.stride_ptr());
-}
-
-template <class t>
-struct dtype_typestr {};
-template <signed_integral t>
-struct dtype_typestr<t> {
-    static constexpr char typestr = 'i';
-};
-template <unsigned_integral t>
-struct dtype_typestr<t> {
-    static constexpr char typestr = 'u';
-};
-template <floating_point t>
-struct dtype_typestr<t> {
-    static constexpr char typestr = 'f';
-};
-
-template <class T>
-void get_typestr(char type[3])
-{
-    type[0] = endian::native == endian::little ? '<' : '>';
-    type[1] = dtype_typestr<T>::typestr;
-    type[2] = '\0';
-}
-
-#include "gmic_image_py.cpp"  // NOLINT(*-suspicious-include)
-#include "gmic_list_py.cpp"   // NOLINT(*-suspicious-include)
-
-template <class T = gmic_pixel_type>
-class interpreter_py {
-    static gmic_list_py<T> *run(gmic &gmic, const char *cmd,
-                                gmic_list_py<T> *img_list,
-                                gmic_charlist_py *img_names)
-    {
-        if (img_list == nullptr)
-            img_list = new gmic_list_py<T>();
-
-        gmic_charlist_py _names, *names = &_names;
-
-        if (img_names)
-            names = img_names;
-
-        try {
-            gmic.run(cmd, img_list->list(), names->list());
-        }
-        catch (gmic_exception &ex) {
-            cerr << ex.what();
-            if (errno)
-                cerr << ": " << strerror(errno);
-            cerr << endl;
-            throw;
-        }
-
-        return img_list;
-    }
-
-    template <class R, class... Args>
-    static auto make_static_run(R (*)(gmic &gmic, Args... args))
-        -> function<R(Args...)>
-    {
-        static unique_ptr<gmic> inter{};
-        return [&](Args... args) {
-            if (!inter)
-                inter = make_unique<gmic>();
-            return run(*inter, args...);
-        };
-    }
-
-    static string str(const gmic &inst)
-    {
-        stringstream out;
-        out << '<' << nb::type_name(nb::type<gmic>()).c_str() << " object at "
-            << &inst << '>';
-        return out.str();
-    }
-
-   public:
-    constexpr static auto CLASSNAME = "Gmic";
-
-    static void bind(nb::module_ &m)
-    {
-        nb::class_<gmic>(m, CLASSNAME)
-            .def("run", &interpreter_py::run, "cmd"_a,
-                 "img_list"_a = nb::none(), "img_names"_a = nb::none(),
-                 nb::rv_policy::take_ownership)
-            .def("__str__", &interpreter_py::str)
-            .def(nb::init());
-
-        m.def("run", make_static_run(&interpreter_py::run), "cmd"_a,
-              "img_list"_a = nb::none(), "img_names"_a = nb::none(),
-              nb::rv_policy::take_ownership);
-    }
-};
 
 template <size_t N = 8>
 constexpr array<char, N> get_gmic_version()
@@ -326,20 +154,10 @@ try {
 #endif
 
     LOG_INFO("Binding gmic module" << endl);
-    LOG_TRACE("Binding gmic.Image class" << endl);
-    gmic_image_py::bind(m);
-    yxc_wrapper::bind(m);
+    bind_gmic_image(m);
+    bind_gmic_list(m);
 
-    LOG_TRACE("Binding gmic.ImageList class" << endl);
-    gmic_list_py<>::bind(m);
-
-    LOG_TRACE("Binding gmic.StringList class" << endl);
-    gmic_charlist_py::bind(m);
-
-    LOG_TRACE("Binding gmic.Gmic class" << endl);
-    interpreter_py<>::bind(m);
-
-    LOG_TRACE("Binding gmic.GmicException class" << endl);
+    LOG_DEBUG("Binding gmic.GmicException class" << endl);
     const auto gmic_ex = nb::exception<  // NOLINT(*-throw-keyword-missing)
         gmic_exception>(m, "GmicException");
 }

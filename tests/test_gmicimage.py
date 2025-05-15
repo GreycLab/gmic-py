@@ -1,6 +1,5 @@
 from typing import Any, List
 
-import PIL.Image
 import gmic
 import numpy as np
 import pytest
@@ -47,11 +46,6 @@ def img(npdata) -> gmic.Image:
 @pytest.fixture
 def img2d(npdata2d) -> gmic.Image:
     return gmic.Image(npdata2d.copy())
-
-
-def pil_img() -> PIL.Image:
-    npshape = (4, 5, 3)
-    return PIL.Image.fromarray(np.arange(np.prod(npshape), dtype=np.uint8).reshape(npshape), "RGB")
 
 
 def test_numpy_passthrough(npdata: np.ndarray, img: gmic.Image):

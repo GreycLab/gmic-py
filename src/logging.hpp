@@ -127,6 +127,21 @@ class function_name_stripped {
     constexpr const char *str() const { return name.data(); }
 };
 
+using Level = DebugLogger::Level;
+extern DebugLogger LOG;
+#define LOG_VA_ELSE(arg, ...) arg
+#define LOG_(level, ...)                                                    \
+    {                                                                       \
+        static constexpr function_name_stripped<strlen(                     \
+            source_location::current().function_name())>                    \
+            fname(source_location::current().function_name());              \
+        LOG << level                                                        \
+            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< ": " << __VA_ARGS__, ) \
+                                       << std::endl);                       \
+    }
+#define LOG_INFO(...) LOG_(Level::Info __VA_OPT__(, __VA_ARGS__))
+#define LOG_DEBUG(...) LOG_(Level::Debug __VA_OPT__(, __VA_ARGS__))
+#define LOG_TRACE(...) LOG_(Level::Trace __VA_OPT__(, __VA_ARGS__))
 }  // namespace gmicpy
 
 #endif  // LOGGING_H
