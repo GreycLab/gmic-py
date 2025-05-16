@@ -18,7 +18,9 @@ static constexpr array<char, 8> get_typestr()
 
     static_assert(signed_integral<T> || unsigned_integral<T> ||
                   floating_point<T>);
-    if constexpr (signed_integral<T>)
+    if constexpr (is_same_v<bool, T>)
+        type[1] = 'b';
+    else if constexpr (signed_integral<T>)
         type[1] = 'i';
     else if constexpr (unsigned_integral<T>)
         type[1] = 'u';

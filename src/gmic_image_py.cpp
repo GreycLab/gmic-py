@@ -682,18 +682,18 @@ class yxc_wrapper {
         return make_wrapper<void>(img).assign_try(array, false);
     }
 
-    Img &assign_try(const NDArrayAnyD<nb::ro> &arr, const bool samedims) const
+    static Img new_image_pil(const nb::object &obj)
     {
-        if (samedims)
-            effective_z<false>();
-        assign_cast(img, to_3d<nb::ro>(arr), z, samedims, cast_pol);
-        return img;
+        LOG_DEBUG("Invoking assign_pil");
+        const auto arr = read_array_interface(obj);
+        if (!arr)
+            throw nb::next_overload();
+        return new_image(*arr);
     }
 
-    static void assign_cast(Img &img, const NDArray<3, nb::ro> &arr,
-                            const optional<size_t> z, const bool samedims,
-                            const cast_policy cast_pol)
+    Img &assign_try(const NDArrayAnyD<nb::ro> &iarr, const bool samedims) const
     {
+        const auto arr = to_3d<>(iarr);
         const auto same = img.width() == arr.shape(GMIC_TO_YXC[0]) &&
                           img.height() == arr.shape(GMIC_TO_YXC[1]) &&
                           img.spectrum() == arr.shape(GMIC_TO_YXC[2]);
@@ -703,7 +703,7 @@ class yxc_wrapper {
                 throw invalid_argument(
                     "Can't assign an array with different dimensions, "
                     "use .assign(array, same_dims=False)");
-            ez = *z;
+            ez = effective_z();
         }
         else {
             if (z) {
@@ -720,7 +720,7 @@ class yxc_wrapper {
         for (const auto &caster : get_casters()) {
             if (arr.dtype() == caster.dtype) {
                 caster.cast_from(img, ez, arr, cast_pol);
-                return;
+                return img;
             }
         }
         throw invalid_argument("Invalid array type");
@@ -740,6 +740,80 @@ class yxc_wrapper {
 
         copy_ndarray_data<3, Ti, T>(src, istrides, ishape, &img(0, 0, z, 0),
                                     ostrides.data(), cast_pol);
+    }
+
+    [[nodiscard]] Img &assign_pil(const nb::object &obj,
+                                  const bool samedims) const
+    {
+        LOG_DEBUG("Invoking assign_pil");
+        const auto arr = read_array_interface(obj);
+        if (!arr)
+            throw nb::next_overload();
+
+        return assign_try(*arr, samedims);
+    }
+
+    static optional<NDArrayAnyD<nb::ro>> read_array_interface(
+        const nb::object &obj)
+    {
+        const auto typ = obj.type();
+        nb::tuple mro = typ.attr("__mro__");
+        const auto imgcls = ranges::find_if(mro, [](const nb::handle &c) {
+            return nb::cast<string>(c.attr("__module__")) == "PIL.Image" &&
+                   nb::cast<string>(c.attr("__qualname__")) == "Image";
+        });
+        if (imgcls != mro.end())
+            try {
+                const nb::dict ai = obj.attr(ARRAY_INTERFACE);
+                if (nb::cast<int>(ai["version"]) != 3)
+                    throw invalid_argument(
+                        "Unsupported array_interface version");
+
+                if (ai.contains("strides") || ai.contains("descr") ||
+                    ai.contains("mask") || ai.contains("offset"))
+                    throw invalid_argument(
+                        "Unsupported array interface attributes");
+
+                auto typestr = nb::cast<string>(ai["typestr"]);
+                auto casters = get_casters();
+                auto caster = ranges::find_if(casters, [&](const auto &cst) {
+                    return cst.typestr == typestr;
+                });
+                if (caster == casters.end())
+                    throw invalid_argument(string("Unsupported datatype: ") +
+                                           typestr);
+
+                const nb::tuple shape_tup = ai["shape"];
+                if (shape_tup.size() < 2 || shape_tup.size() > 3)
+                    throw invalid_argument(
+                        "Invalid array size: should be 2 or 3");
+                vector<size_t> shape;
+                size_t size = 1;
+                for (auto i : shape_tup) {
+                    const int d = nb::cast<int>(i);
+                    shape.push_back(d);
+                    size *= d;
+                }
+
+                const nb::bytes data = ai["data"];
+                if (data.size() != size)
+                    throw invalid_argument(
+                        "Bytes object length doesn't match shape");
+
+                return NDArrayAnyD<nb::ro>(data.data(), shape.size(),
+                                           shape.data(), nb::handle(ai),
+                                           nullptr, caster->dtype);
+            }
+            catch (invalid_argument) {
+                throw;
+            }
+            catch (exception &ex) {
+                LOG_INFO("Error accessing PIL image data: " << ex.what()
+                                                            << endl);
+                throw invalid_argument(
+                    "Couldn't get image data from argument");
+            }
+        return {};
     }
 
     static void bind(nb::class_<Img> &imgcls)
@@ -777,7 +851,10 @@ class yxc_wrapper {
                 .def("assign", &yxc_wrapper::assign_try,
                      "Assigns the given array-compatible object's data to the "
                      "image",
-                     "array"_a, "same_dims"_a = true, nb::rv_policy::none);
+                     "array"_a, "same_dims"_a = true, nb::rv_policy::none)
+                .def("assign", &yxc_wrapper::assign_pil,
+                     "Assigns the given PIL Image's data to the image",
+                     "image"_a, "same_dims"_a = true, nb::rv_policy::none);
 
         imgcls
             .def_prop_ro(
@@ -785,13 +862,16 @@ class yxc_wrapper {
             .def_static(
                 "from_yxc", &yxc_wrapper::new_image,
                 "Constructs an image from the given XYC-ordered ndarray",
-                "array"_a);
+                "array"_a)
+            .def_static("from_yxc", &yxc_wrapper::new_image_pil,
+                        "Constructs an image from the given PIL Image",
+                        "image"_a);
         LOG_DEBUG("Attaching yxc methods to class " << nb::repr(imgcls).c_str()
                                                     << endl);
     }
 };
 
-void bind_gmic_image(nanobind::module_ &m)
+void bind_gmic_image(const nanobind::module_ &m)
 {
     auto imgcls = gmic_image_py::bind(m);
 

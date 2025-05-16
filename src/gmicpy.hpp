@@ -34,7 +34,7 @@
 #endif
 
 namespace gmicpy {
-void bind_gmic_image(nanobind::module_ &m);
+void bind_gmic_image(const nanobind::module_ &m);
 void bind_gmic_list(nanobind::module_ &m);
 
 std::ostream &operator<<(std::ostream &out, const cimg_library::CImg<> &img);

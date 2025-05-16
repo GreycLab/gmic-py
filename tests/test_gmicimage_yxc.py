@@ -26,9 +26,13 @@ def gmic_img(img_path) -> PIL.Image:
     return gmic.Image(img_path)
 
 
-def test_xyc(pil_img: PIL.Image.Image, gmic_img: gmic.Image):
+def test_pil_compat(pil_img: PIL.Image.Image, gmic_img: gmic.Image):
     assert pil_img.width == gmic_img.width and pil_img.height == gmic_img.height and len(
         pil_img.getbands()) == gmic_img.spectrum and gmic_img.depth == 1
 
     assert_array_equal(pil_img, PIL.Image.fromarray(gmic_img.yxc))
     assert_array_equal(gmic.Image.from_yxc(np.asarray(pil_img)), gmic_img)
+    assert_array_equal(gmic.Image.from_yxc(pil_img), gmic_img)
+
+    for mode in ['1', 'L', 'LA', 'RGB', 'I', 'I;16', 'F']:
+        gmic.Image.from_yxc(pil_img.convert(mode))
