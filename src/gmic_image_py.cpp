@@ -40,12 +40,16 @@ class gmic_image_py {
     static void new_image(Img *img, Args... args)
     {
         if constexpr (can_native_init<Img, Args...>::value) {
-            LOG_DEBUG(assign_signature<Args...>("new_image") << endl);
             new (img) Img(args...);
+            LOG << Level::Debug
+                << assign_signature<Img &, Args...>("new_image") << ": "
+                << image_to_string(*img) << endl;
         }
         else {
             new (img) Img();
             assign(*img, args...);  // NOLINT(*-unnecessary-value-param)
+            LOG << Level::Debug << assign_signature<Img &, Args...>("assign")
+                << ": " << image_to_string(*img) << endl;
         }
     }
 
@@ -54,7 +58,8 @@ class gmic_image_py {
         is_lvalue_reference_v<decltype(Img{}.assign(declval<Args>()...))>,
         Img &>
     {
-        LOG_DEBUG(assign_signature<Args...>("assign") << endl);
+        LOG << Level::Debug << assign_signature<Img &, Args...>("assign")
+            << ": " << image_to_string(img) << endl;
         img.assign(args...);
         return img;
     }
@@ -115,6 +120,10 @@ class gmic_image_py {
 
     static Img &assign(Img &img, const std::filesystem::path &path)
     {
+        LOG << Level::Debug
+            << assign_signature<Img &, const std::filesystem::path &>("assign")
+            << ": image at " << static_cast<void *>(&img)
+            << ", data at: " << img.data() << endl;
         return img.load(path.c_str());
     }
 
@@ -122,6 +131,10 @@ class gmic_image_py {
         requires(!same_as<Ti, T>)
     static Img &assign(Img &img, nb::ndarray<Ti, nb::device::cpu, P...> arr)
     {
+        LOG << Level::Debug
+            << assign_signature<Img &, const std::filesystem::path &>("assign")
+            << ": image at " << static_cast<void *>(&img)
+            << ", data at: " << img.data() << endl;
         CImg<Ti> img2(arr);
         img.assign(img2);
         return img;
@@ -180,7 +193,7 @@ class gmic_image_py {
 
     /** Casts a python object into a valid coordinate for the given dimension
      * size */
-    static unsigned int cast_coord(const nb::handle &obj,
+    static unsigned int cast_coord(const nb::object &obj,
                                    const unsigned int size, const char *dim)
     {
         try {
@@ -280,13 +293,6 @@ class gmic_image_py {
                              [&](unsigned int i) { return img(x, y, z, i); });
     }
 
-    [[nodiscard]] static string str(const Img &img)
-    {
-        stringstream out;
-        out << img;
-        return out.str();
-    }
-
     template <class... Args>
     using assign_t = Img &(*)(Img &, Args...);
     template <class... Args>
@@ -297,7 +303,7 @@ class gmic_image_py {
         LOG_DEBUG("Binding gmic.Image class" << endl);
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
         auto cls =
-            nb::class_<Img>(m, CLASSNAME, "GMIC Image")
+            nb::class_<Img>(m, CLASSNAME, "G'MIC Image")
                 .def(DLPACK_INTERFACE, &gmic_image_py::dlpack,
                      nb::rv_policy::reference_internal)
                 .def(DLPACK_DEVICE_INTERFACE, &gmic_image_py::dlpack_device)
@@ -341,8 +347,7 @@ class gmic_image_py {
                 .def_prop_ro("size", &Img::size,
                              "Total number of values in the image (product of "
                              "all dimensions)")
-                .def("__str__", &gmic_image_py::str)
-                .def("__repr__", &gmic_image_py::str)
+                .def("__repr__", &image_to_string)
                 .def("__getitem__", &get, get_pydoc)
                 .def(+nb::self, "Returns a copy of the image")
                 .def(-nb::self)
@@ -410,9 +415,6 @@ class gmic_image_py {
             "repeat"_a);
         IMAGE_ASSIGN("assign_load_file",
                      "Construct image from reading an image file",
-                     ARGS(const char *), "filename"_a);
-        IMAGE_ASSIGN("assign_load_file",
-                     "Construct image from reading an image file",
                      ARGS(const filesystem::path &), "filename"_a);
         IMAGE_ASSIGN(
             "assign_copy_dims",
@@ -426,7 +428,8 @@ class gmic_image_py {
                      "missing ones are assigned a size of 1.\n"
                      "Be aware that most image processing libraries use a "
                      "different order for dimensions (yxc), so this method "
-                     "will not work as expected with such libraries.",
+                     "will not work as expected with such libraries. Use "
+                     "Image.from_yxc(array) or img.yxc = array in that case.",
                      ARGS(CTNDArray<>), "array"_a);
 
         return cls;
@@ -438,6 +441,8 @@ class gmic_image_py {
 class yxc_wrapper {
    public:
     constexpr static auto CLASSNAME = "YXCWrapper";
+    constexpr static auto CASTPOLICY_CLASSNAME = "CastPolicy";
+    constexpr static cast_policy DEFAULT_CAST_POLICY = CLAMP;
     template <class... P>
     using NDArrayAnyD = nb::ndarray<nb::device::cpu, P...>;
     template <size_t ndim, class... P>
@@ -448,7 +453,7 @@ class yxc_wrapper {
 
    private:
     using T = gmic_pixel_type;
-    using TO = uint8_t;  // Default output type
+    using DefaultOut = uint8_t;
     using ImgPy = gmic_image_py;
     using Img = ImgPy::Img;
 
@@ -460,8 +465,6 @@ class yxc_wrapper {
 
         nb::dlpack::dtype dtype;
         string typestr;
-        static constexpr const char *void_error =
-            "Tried to invoke void type caster";
 
         template <class t>
         static data_caster make_caster()
@@ -470,11 +473,12 @@ class yxc_wrapper {
                 return data_caster{{}, {}, {}, {}};
             else
                 return data_caster{&yxc_wrapper::cast_data<T, t>,
-                                   &yxc_wrapper::assign<t>, nb::dtype<t>(),
-                                   get_typestr<t>().data()};
+                                   &yxc_wrapper::assign_data<t>,
+                                   nb::dtype<t>(), get_typestr<t>().data()};
         }
     };
 
+    nb::object img_obj;  // To keep the source image from being freed
     Img &img;
     optional<size_t> z;
     optional<NDArray<3, nb::ro>> data = {};
@@ -488,7 +492,7 @@ class yxc_wrapper {
     static constexpr array<size_t, 4> YXC_TO_GMIC = {1, 0, DIM_NONE, 2};
 
     template <bool rtrn = true>
-    conditional_t<rtrn, size_t, void> effective_z()
+    [[nodiscard]] conditional_t<rtrn, size_t, void> effective_z()
         const  // NOLINT(*-use-nodiscard)
     {
         if (!z && img.depth() != 1) {
@@ -562,33 +566,109 @@ class yxc_wrapper {
         return casters;
     }
 
+    static const vector<string> &get_casters_strs()
+    {
+        thread_local vector<string> typestrings;
+        if (typestrings.empty()) {
+            ranges::transform(get_casters(), back_inserter(typestrings),
+                              &data_caster::typestr);
+            if (typestrings.empty())
+                throw runtime_error("");
+        }
+        return typestrings;
+    }
+
    public:
+    explicit yxc_wrapper(const nb::object &img_obj, const optional<size_t> z,
+                         data_caster caster, const cast_policy cast_pol)
+        : img_obj(img_obj),
+          img(nb::cast<Img &>(img_obj, false)),
+          z(z),
+          cast_pol(cast_pol),
+          caster(std::move(caster))
+    {
+    }
+
     explicit yxc_wrapper(Img &img, const optional<size_t> z,
                          data_caster caster, const cast_policy cast_pol)
         : img(img), z(z), cast_pol(cast_pol), caster(std::move(caster))
     {
     }
 
+    /// Creates a temporary wrapper meant to perform a one-time conversion and
+    /// which should never be returned to Python
     template <class To>
-    static yxc_wrapper make_wrapper(Img &img, const optional<size_t> z = {},
-                                    const cast_policy cast_pol = CLAMP)
+    static yxc_wrapper make_tmp_wrapper(
+        Img &img, const optional<size_t> z = {},
+        const cast_policy cast_pol = DEFAULT_CAST_POLICY)
     {
         return yxc_wrapper(img, z, data_caster::make_caster<To>(), cast_pol);
     }
 
-    [[nodiscard]] yxc_wrapper with_z(size_t z) const
+    [[nodiscard]] static optional<data_caster> get_caster(
+        const string &typestr)
     {
-        if (this->z)
-            throw runtime_error("Depth is already set");
-        if (z >= img.depth())
-            throw out_of_range("Z out of range for image depth");
-        return yxc_wrapper(img, z, caster, cast_pol);
+        auto &casters = get_casters();
+        const auto caster =
+            ranges::find_if(casters, [&](data_caster const &c) {
+                return typestr == c.typestr || typestr == c.typestr.substr(1);
+            });
+        if (caster == casters.end())
+            return {};
+        return *caster;
     }
 
-    template <class To>
-    [[nodiscard]] yxc_wrapper with_dtype() const
+    [[nodiscard]] yxc_wrapper with(const nb::handle args) const
     {
-        return make_wrapper<To>(img, z, cast_pol);
+        nb::tuple tup;
+        try {
+            tup = nb::cast<nb::tuple>(args, false);
+        }
+        catch (nb::cast_error &) {
+            tup = nb::make_tuple(args);
+        }
+        try {
+            optional<size_t> nz;
+            optional<data_caster> cast;
+            optional<cast_policy> pol;
+            for (const auto &a : tup) {
+                if (!nz)
+                    try {
+                        nz = static_cast<size_t>(nb::cast<nb::int_>(a, false));
+                        if (z)
+                            throw runtime_error("Depth is already set");
+                        if (nz >= img.depth())
+                            throw out_of_range(
+                                "Z out of range for image depth");
+                        continue;
+                    }
+                    catch (nb::cast_error &) {
+                    }
+                if (!cast)
+                    try {
+                        auto typestr = nb::cast<string>(a, false);
+                        cast = get_caster(typestr);
+                        if (!cast)
+                            throw nb::value_error(
+                                ("Unknown dtype conversion requested: " +
+                                 typestr)
+                                    .c_str());
+                        continue;
+                    }
+                    catch (nb::cast_error &) {
+                    }
+                if (!pol)
+                    pol = nb::cast<cast_policy>(a, false);
+            }
+
+            return yxc_wrapper(img_obj, nz ? nz : z, cast.value_or(caster),
+                               pol.value_or(cast_pol));
+        }
+        catch (nb::cast_error &e) {
+            LOG_DEBUG("Cast error: " << e.what() << endl);
+            throw nb::type_error(
+                "Unknown type or multiple argument of the same type");
+        }
     }
 
     template <class... P>
@@ -676,38 +756,37 @@ class yxc_wrapper {
         throw nb::next_overload("Array should be 2- or 3-dimensional");
     }
 
-    static Img new_image(const NDArrayAnyD<nb::ro> &array)
+    static Img *new_image(const nb::object &obj)
     {
-        Img img;
-        return make_wrapper<void>(img).assign_try(array, false);
+        const NDArrayAnyD<nb::ro> ndarr = cast_to_ndarray(obj);
+        const auto img = new Img();
+        const auto wrp = make_tmp_wrapper<void>(*img);
+        wrp.assign_ndarray(ndarr, false);
+        LOG_DEBUG("Created image " << image_to_string(*img) << endl);
+        return img;
     }
 
-    static Img new_image_pil(const nb::object &obj)
+    void assign_ndarray(const NDArrayAnyD<nb::ro> &iarr,
+                        const bool samedims) const
     {
-        LOG_DEBUG("Invoking assign_pil");
-        const auto arr = read_array_interface(obj);
-        if (!arr)
-            throw nb::next_overload();
-        return new_image(*arr);
-    }
-
-    Img &assign_try(const NDArrayAnyD<nb::ro> &iarr, const bool samedims) const
-    {
+        LOG_DEBUG("z = " << (z ? static_cast<int>(*z) : -1) << ", cast_pol = "
+                         << cast_pol << ", dtype: " << caster.typestr
+                         << ", samedims: " << samedims << endl);
         const auto arr = to_3d<>(iarr);
-        const auto same = img.width() == arr.shape(GMIC_TO_YXC[0]) &&
-                          img.height() == arr.shape(GMIC_TO_YXC[1]) &&
-                          img.spectrum() == arr.shape(GMIC_TO_YXC[2]);
+        const auto same = img.height() == arr.shape(0) &&
+                          img.width() == arr.shape(1) &&
+                          img.spectrum() == arr.shape(2);
         size_t ez;
         if (samedims) {
             if (!same)
-                throw invalid_argument(
+                throw nb::value_error(
                     "Can't assign an array with different dimensions, "
                     "use .assign(array, same_dims=False)");
             ez = effective_z();
         }
         else {
             if (z) {
-                throw invalid_argument(
+                throw nb::value_error(
                     "Can't assign new dims to array with Z set");
             }
             if (!same || img.depth() != 1) {
@@ -720,15 +799,16 @@ class yxc_wrapper {
         for (const auto &caster : get_casters()) {
             if (arr.dtype() == caster.dtype) {
                 caster.cast_from(img, ez, arr, cast_pol);
-                return img;
+                return;
             }
         }
-        throw invalid_argument("Invalid array type");
+        throw nb::value_error("Invalid array type");
     }
 
     template <class Ti>
-    static void assign(Img &img, const size_t z,
-                       const NDArray<3, nb::ro> &iarr, cast_policy cast_pol)
+    static void assign_data(Img &img, const size_t z,
+                            const NDArray<3, nb::ro> &iarr,
+                            cast_policy cast_pol)
     {
         if (iarr.dtype() != nb::dtype<Ti>())
             throw runtime_error("Invalid array dtype passed to assign");
@@ -742,20 +822,18 @@ class yxc_wrapper {
                                     ostrides.data(), cast_pol);
     }
 
-    [[nodiscard]] Img &assign_pil(const nb::object &obj,
-                                  const bool samedims) const
+    void assign(const nb::handle &obj, const bool samedims) const
     {
-        LOG_DEBUG("Invoking assign_pil");
-        const auto arr = read_array_interface(obj);
-        if (!arr)
-            throw nb::next_overload();
-
-        return assign_try(*arr, samedims);
+        return assign_ndarray(cast_to_ndarray(obj), samedims);
     }
 
-    static optional<NDArrayAnyD<nb::ro>> read_array_interface(
-        const nb::object &obj)
+    static NDArrayAnyD<nb::ro> cast_to_ndarray(const nb::handle &obj)
     {
+        try {
+            return nb::cast<NDArrayAnyD<nb::ro>>(obj, false);
+        }
+        catch (nb::cast_error &) {
+        }
         const auto typ = obj.type();
         nb::tuple mro = typ.attr("__mro__");
         const auto imgcls = ranges::find_if(mro, [](const nb::handle &c) {
@@ -776,19 +854,20 @@ class yxc_wrapper {
 
                 auto typestr = nb::cast<string>(ai["typestr"]);
                 auto casters = get_casters();
-                auto caster = ranges::find_if(casters, [&](const auto &cst) {
-                    return cst.typestr == typestr;
-                });
-                if (caster == casters.end())
+                const auto caster_it = ranges::find_if(
+                    casters,
+                    [&](const auto &cst) { return cst.typestr == typestr; });
+                if (caster_it == casters.end())
                     throw invalid_argument(string("Unsupported datatype: ") +
                                            typestr);
+                const auto &caster = *caster_it;
 
                 const nb::tuple shape_tup = ai["shape"];
                 if (shape_tup.size() < 2 || shape_tup.size() > 3)
                     throw invalid_argument(
                         "Invalid array size: should be 2 or 3");
                 vector<size_t> shape;
-                size_t size = 1;
+                size_t size = (caster.dtype.bits + 7) / 8;
                 for (auto i : shape_tup) {
                     const int d = nb::cast<int>(i);
                     shape.push_back(d);
@@ -798,13 +877,13 @@ class yxc_wrapper {
                 const nb::bytes data = ai["data"];
                 if (data.size() != size)
                     throw invalid_argument(
-                        "Bytes object length doesn't match shape");
+                        string("Bytes object length doesn't match shape: ") +
+                        to_string(data.size()) + " != " + to_string(size));
 
-                return NDArrayAnyD<nb::ro>(data.data(), shape.size(),
-                                           shape.data(), nb::handle(ai),
-                                           nullptr, caster->dtype);
+                return {data.data(), shape.size(), shape.data(),
+                        ai,          nullptr,      caster.dtype};
             }
-            catch (invalid_argument) {
+            catch (invalid_argument &) {
                 throw;
             }
             catch (exception &ex) {
@@ -813,28 +892,91 @@ class yxc_wrapper {
                 throw invalid_argument(
                     "Couldn't get image data from argument");
             }
-        return {};
+        throw nb::type_error(
+            "Unsupported object type. Object should be readable through "
+            "the buffer protocol, DLPack or the NumPy array interface");
+    }
+
+    [[nodiscard]] string str() const
+    {
+        stringstream out;
+
+        out << "<" << nb::type_name(nb::type<yxc_wrapper>()).c_str() << " at "
+            << this << ", image at " << &img << ", z=";
+        if (z)
+            out << *z;
+        else
+            out << "None";
+        out << ", cast_policy=";
+        switch (cast_pol) {
+            case CLAMP:
+                out << "CLAMP";
+                break;
+            case THROW:
+                out << "THROW";
+                break;
+            case NOCHECK:
+                out << "NOCHECK";
+        }
+        out << ">";
+
+        return out.str();
     }
 
     static void bind(nb::class_<Img> &imgcls)
     {
         LOG_DEBUG("Binding gmic.Image.YXCWrapper class" << endl);
         char doc[1024];
-        snprintf(doc, size(doc),
-                 "Wrapper around a gmic.%s to exchange with "
-                 "libraries using YXC axe order",
-                 ImgPy::CLASSNAME);
+
+        const auto castpolcls =
+            nb::enum_<cast_policy>(
+                imgcls, CASTPOLICY_CLASSNAME,
+                "Datatype casting policy for OOB (out-of-bounds) values")
+                .value("CLAMP", CLAMP,
+                       "OOB values will be clamped to nearest bound (default)")
+                .value("THROW", THROW,
+                       "Exception will be raised if any OOB value is found")
+                .value(
+                    "NOCHECK", NOCHECK,
+                    "Disable checking for OOB values. Can increase "
+                    "performances "
+                    "at the risk of running into undefined behaviour on OOB "
+                    "values (see C++ rules for Floating-integral conversion).")
+                .export_values();
+
         auto cls =
-            nb::class_<yxc_wrapper>(imgcls, CLASSNAME, doc)
-                .def_prop_ro(
-                    "image", [](const yxc_wrapper &wrap) { return wrap.img; },
-                    nb::rv_policy::reference_internal)
+            nb::class_<yxc_wrapper>(
+                imgcls, CLASSNAME,
+                ssnprintf(doc,
+                          "Wrapper around a gmic.%s to exchange with "
+                          "libraries using YXC axe order",
+                          ImgPy::CLASSNAME))
+                .def_prop_ro_static(
+                    "dtypes", [](nb::handle) { return get_casters_strs(); })
+                .def_prop_ro("image",
+                             [](const yxc_wrapper &wrap) {
+                                 return nb::handle_t<Img>(wrap.img_obj);
+                             })
                 .def_ro("z", &yxc_wrapper::z)
-                .def("__getitem__", &yxc_wrapper::with_z, "z"_a)
+                .def_prop_ro(
+                    "dtype",
+                    [](const yxc_wrapper &wrp) { return wrp.caster.typestr; })
+                .def_ro("cast_policy", &yxc_wrapper::cast_pol)
+                .def("__getitem__", &yxc_wrapper::with,
+                     "Sets the wrapper's z, target datatype and/or casting "
+                     "policy",
+                     "args"_a.sig(ssnprintf(doc, "Tuple[int | str | %s, ...]",
+                                            type_name(castpolcls).c_str())))
+                .def("__setitem__",
+                     [](const yxc_wrapper &wrp, const nb::handle args,
+                        const nb::handle &obj) {
+                         wrp.with(args).assign(obj, true);
+                     })
                 .def(DLPACK_INTERFACE, &yxc_wrapper::to_ndarray<>)
                 .def(DLPACK_DEVICE_INTERFACE, &yxc_wrapper::dlpack_device)
                 .def_prop_ro(ARRAY_INTERFACE, &yxc_wrapper::array_interface,
                              nb::rv_policy::reference)
+                .def("__repr__", &yxc_wrapper::str)
                 .def("to_numpy", &yxc_wrapper::to_ndarray<nb::numpy>,
                      "Returns a copy of the underlying data as a Numpy "
                      "NDArray")
@@ -842,30 +984,35 @@ class yxc_wrapper {
                     "tobytes", &yxc_wrapper::get_bytes,
                     "Returns the image data converted to the wrapper dtype as "
                     "a bytes object")
-                .def("to_numpy_raw", &yxc_wrapper::reshape_to_yxc<nb::numpy>,
-                     "Returns a direct reshaped view into the image data")
                 .def_prop_ro(
                     "shape", &yxc_wrapper::shape_yxc<size_t, true>,
                     "Returns the shape (size along each axis) tuple of the "
-                    "image in xyzc order")
-                .def("assign", &yxc_wrapper::assign_try,
-                     "Assigns the given array-compatible object's data to the "
-                     "image",
-                     "array"_a, "same_dims"_a = true, nb::rv_policy::none)
-                .def("assign", &yxc_wrapper::assign_pil,
-                     "Assigns the given PIL Image's data to the image",
-                     "image"_a, "same_dims"_a = true, nb::rv_policy::none);
+                    "image in xyzc order");
+        cls.def("assign", &yxc_wrapper::assign,
+                "Assigns the given object's data to the image. Object "
+                "must be readable through either the buffer protocol, "
+                "DLPack or the NumPy Array Interface",
+                "image"_a, "same_dims"_a = true);
 
         imgcls
-            .def_prop_ro(
-                "yxc", [](Img &img) { return make_wrapper<TO>(img); }, doc)
-            .def_static(
-                "from_yxc", &yxc_wrapper::new_image,
-                "Constructs an image from the given XYC-ordered ndarray",
-                "array"_a)
-            .def_static("from_yxc", &yxc_wrapper::new_image_pil,
-                        "Constructs an image from the given PIL Image",
-                        "image"_a);
+            .def_prop_rw(
+                "yxc",
+                [](const nb::handle_t<Img> img) {
+                    return new yxc_wrapper(
+                        nb::steal(img), {},
+                        data_caster::make_caster<DefaultOut>(),
+                        DEFAULT_CAST_POLICY);
+                },
+                [](Img &img, const nb::object &obj) {
+                    make_tmp_wrapper<void>(img).assign(obj, true);
+                },
+                doc)
+            .def_static("from_yxc", &yxc_wrapper::new_image,
+                        nb::rv_policy::take_ownership,
+                        "Constructs an image from the given object. Object "
+                        "must be readable through either the buffer protocol, "
+                        "DLPack or the NumPy Array Interface",
+                        "source"_a);
         LOG_DEBUG("Attaching yxc methods to class " << nb::repr(imgcls).c_str()
                                                     << endl);
     }

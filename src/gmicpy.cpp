@@ -52,24 +52,6 @@ string inspect(const nb::ndarray<nb::ro> &a)
     return buf.str();
 }
 
-ostream &operator<<(ostream &out, const CImg<> &img)
-{
-    out << "<" << nb::type_name(nb::type<CImg<>>()).c_str() << " at " << &img
-        << ", data at: " << img.data();
-#if DEBUG == 1
-    out << ", nb::object: ";
-    if (const nb::object pyimg = nb::find(img); pyimg.is_valid()) {
-        out << pyimg.ptr();
-    }
-    else {
-        out << "none";
-    }
-#endif
-    out << ", w×h×d×s=" << img.width() << "×" << img.height() << "×"
-        << img.depth() << "×" << img.spectrum() << ">";
-    return out;
-}
-
 template <size_t N = 8>
 constexpr array<char, N> get_gmic_version()
 {

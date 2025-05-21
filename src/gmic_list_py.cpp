@@ -23,7 +23,8 @@ class gmic_list_base {
     virtual ~gmic_list_base() = default;
 
    public:
-    static constexpr auto CLASSNAME = "ImageList";
+    static constexpr const char *CLASSINFO[2] = {"ImageList",
+                                                 "List of G'MIC images"};
     using Item = CImg<T> &;
 
     [[nodiscard]] Item get(unsigned int i)
@@ -62,7 +63,8 @@ class gmic_list_base<char> {
 
    public:
     using Item = string;
-    static constexpr auto CLASSNAME = "StringList";
+    static constexpr const char *CLASSINFO[2] = {"StringList",
+                                                 "List of strings"};
 
     [[nodiscard]] Item get(const unsigned int i) const
     {
@@ -103,7 +105,7 @@ class gmic_list_py : public gmic_list_base<T> {
             if (!nb::try_cast(img, imgs[i++], true))
                 throw nb::type_error(
                     "Sequence contains object(s) that isn't and cannot be "
-                    "made into a gmic Image");
+                    "made into a G'MIC Image");
         }
         if (i < N)
             throw invalid_argument(
@@ -186,9 +188,10 @@ class gmic_list_py : public gmic_list_base<T> {
 
     static void bind(nb::module_ &m)
     {
-        LOG_DEBUG("Binding gmic." << gmic_list_base<T>::CLASSNAME << " class"
-                                  << endl);
-        nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSNAME)
+        LOG_DEBUG("Binding gmic." << gmic_list_base<T>::CLASSINFO[0]
+                                  << " class" << endl);
+        nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSINFO[0],
+                                 gmic_list_base<T>::CLASSINFO[1])
             .def(nb::init())
             .def(nb::init_implicit<nb::sequence>())
             .def("__iter__", &gmic_list_py::iter)
@@ -257,8 +260,8 @@ class interpreter_py {
 
     static void bind(nb::module_ &m)
     {
-        LOG_DEBUG("Binding gmic." << CLASSNAME << " class" << endl);
-        nb::class_<gmic>(m, CLASSNAME)
+        LOG_DEBUG("Binding G'MIC." << CLASSNAME << " class" << endl);
+        nb::class_<gmic>(m, CLASSNAME, "G'MIC interpreter")
             .def("run", &interpreter_py::run, "cmd"_a,
                  "img_list"_a = nb::none(), "img_names"_a = nb::none(),
                  nb::rv_policy::take_ownership)
