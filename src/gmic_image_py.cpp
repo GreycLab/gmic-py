@@ -13,6 +13,16 @@ constexpr auto ARRAY_INTERFACE = "__array_interface__";
 constexpr auto DLPACK_INTERFACE = "__dlpack__";
 constexpr auto DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
 
+#define ARGS(...) __VA_ARGS__
+#if DEBUG
+#define LOG_SIG(level, func, args, ...)                            \
+    LOG << Level::level                                            \
+        << assign_signature<args>(Py_STRINGIFY(func)) LOG_VA_ELSE( \
+               __VA_OPT__(<< ": " << __VA_ARGS__, ) << std::endl);
+#else
+#define LOG_SIG(...) ;
+#endif
+
 class gmic_image_py {
    public:
     using T = gmic_pixel_type;
@@ -41,15 +51,14 @@ class gmic_image_py {
     {
         if constexpr (can_native_init<Img, Args...>::value) {
             new (img) Img(args...);
-            LOG << Level::Debug
-                << assign_signature<Img &, Args...>("new_image") << ": "
-                << image_to_string(*img) << endl;
+            LOG_SIG(Debug, new_image, ARGS(Img &, Args...),
+                    img_to_string(*img) << endl);
         }
         else {
             new (img) Img();
             assign(*img, args...);  // NOLINT(*-unnecessary-value-param)
-            LOG << Level::Debug << assign_signature<Img &, Args...>("assign")
-                << ": " << image_to_string(*img) << endl;
+            LOG_SIG(Debug, assign, ARGS(Img &, Args...),
+                    img_to_string(*img) << endl);
         }
     }
 
@@ -58,8 +67,8 @@ class gmic_image_py {
         is_lvalue_reference_v<decltype(Img{}.assign(declval<Args>()...))>,
         Img &>
     {
-        LOG << Level::Debug << assign_signature<Img &, Args...>("assign")
-            << ": " << image_to_string(img) << endl;
+        LOG_SIG(Debug, assign, ARGS(Img &, Args...),
+                img_to_string(img) << endl);
         img.assign(args...);
         return img;
     }
@@ -67,7 +76,8 @@ class gmic_image_py {
     template <class... P>
     static Img &assign(Img &img, CTNDArray<P...> arr)
     {
-        LOG_DEBUG();
+        LOG_SIG(Debug, assign, ARGS(Img &, CTNDArray<P...>),
+                img_to_string(img) << endl);
         if (arr.ndim() == 0 || arr.ndim() > 4) {
             throw nb::value_error(
                 "Invalid ndarray dimensions for image "
@@ -89,11 +99,15 @@ class gmic_image_py {
     {
         static constexpr size_t DIM_X = 0, DIM_Y = 1, DIM_Z = 2, DIM_C = 3;
         img.assign(shape[DIM_X], shape[DIM_Y], shape[DIM_Z], shape[DIM_C]);
-        LOG_DEBUG("\nCopying data from "
-                  << arr.data() << " with shape=(" << shape[0] << ", "
-                  << shape[1] << ", " << shape[2] << ", " << shape[3]
-                  << ") and strides=(" << strides[0] << ", " << strides[1]
-                  << ", " << strides[2] << ", " << strides[3] << ")");
+        LOG_SIG(Trace, assign,
+                ARGS(Img &, CTNDArray<P...> &, const array<size_t, 4> &,
+                     const array<size_t, 4> &),
+                img_to_string(img)
+                    << "\nCopying data from " << arr.data() << " with shape=("
+                    << shape[0] << ", " << shape[1] << ", " << shape[2] << ", "
+                    << shape[3] << ") and strides=(" << strides[0] << ", "
+                    << strides[1] << ", " << strides[2] << ", " << strides[3]
+                    << ")");
 
         if (is_f_contig(arr)) {
             LOG << ", F-contig (std::copy_n)" << endl;
@@ -120,10 +134,7 @@ class gmic_image_py {
 
     static Img &assign(Img &img, const std::filesystem::path &path)
     {
-        LOG << Level::Debug
-            << assign_signature<Img &, const std::filesystem::path &>("assign")
-            << ": image at " << static_cast<void *>(&img)
-            << ", data at: " << img.data() << endl;
+        LOG_DEBUG(img_to_string(img) << endl);
         return img.load(path.c_str());
     }
 
@@ -131,10 +142,9 @@ class gmic_image_py {
         requires(!same_as<Ti, T>)
     static Img &assign(Img &img, nb::ndarray<Ti, nb::device::cpu, P...> arr)
     {
-        LOG << Level::Debug
-            << assign_signature<Img &, const std::filesystem::path &>("assign")
-            << ": image at " << static_cast<void *>(&img)
-            << ", data at: " << img.data() << endl;
+        LOG_SIG(Trace, assign,
+                ARGS(Img &, nb::ndarray<Ti, nb::device::cpu, P...>),
+                img_to_string(img) << endl);
         CImg<Ti> img2(arr);
         img.assign(img2);
         return img;
@@ -143,6 +153,8 @@ class gmic_image_py {
     template <class Tp = T, class... P>
     static auto as_ndarray(Img &img)
     {
+        if (img.data() == nullptr)
+            throw runtime_error("Invalid access: Image has no data");
         auto shape_v = shape<size_t, array<size_t, 4>>(img);
         auto strides_v = strides<int64_t, false, array<int64_t, 4>>(img);
         return TNDArray<Tp, nb::ndim<4>, P...>(img.data(), 4, shape_v.data(),
@@ -156,13 +168,15 @@ class gmic_image_py {
 
     static auto dlpack(Img &img)
     {
-        LOG_TRACE();
+        LOG_TRACE(img_to_string(img) << endl);
         return as_ndarray<>(img);
     }
 
     static nb::object array_interface(Img &img)
     {
-        LOG_TRACE();
+        LOG_TRACE(img_to_string(img) << endl);
+        if (img.data() == nullptr)
+            throw runtime_error("Invalid access: Image has no data");
         nb::dict ai{};
         ai["typestr"] = get_typestr<T>().data();
         ai["data"] =
@@ -347,7 +361,7 @@ class gmic_image_py {
                 .def_prop_ro("size", &Img::size,
                              "Total number of values in the image (product of "
                              "all dimensions)")
-                .def("__repr__", &image_to_string)
+                .def("__repr__", &img_to_string)
                 .def("__getitem__", &get, get_pydoc)
                 .def(+nb::self, "Returns a copy of the image")
                 .def(-nb::self)
@@ -384,7 +398,6 @@ class gmic_image_py {
         // ReSharper restore CppIdenticalOperandsInBinaryExpression
 
         // Bindings for CImg constructors and assign()'s
-#define ARGS(...) __VA_ARGS__
 #define IMAGE_ASSIGN(funcname, doc, TYPES, ...)                              \
     cls.def("__init__",                                                      \
             static_cast<new_image_t<TYPES>>(&gmic_image_py::new_image),      \
@@ -435,7 +448,6 @@ class gmic_image_py {
         return cls;
     }
 #undef IMAGE_ASSIGN
-#undef ARGS
 };
 
 class yxc_wrapper {
@@ -762,7 +774,7 @@ class yxc_wrapper {
         const auto img = new Img();
         const auto wrp = make_tmp_wrapper<void>(*img);
         wrp.assign_ndarray(ndarr, false);
-        LOG_DEBUG("Created image " << image_to_string(*img) << endl);
+        LOG_DEBUG("Created image " << img_to_string(*img) << endl);
         return img;
     }
 

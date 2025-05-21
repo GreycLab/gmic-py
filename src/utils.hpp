@@ -293,21 +293,11 @@ nb::tuple to_tuple_func(I size, F get,
 
 #define ssnprintf(buf, ...) (snprintf(buf, std::size(buf), __VA_ARGS__), buf)
 
-[[nodiscard]] static string image_to_string(const CImg<> &img)
+[[nodiscard]] static string img_to_string(const CImg<> &img)
 {
     stringstream out;
     out << "<" << nb::type_name(nb::type<CImg<>>()).c_str() << " at " << &img
         << ", data at: " << img.data();
-    // #if DEBUG == 1
-    //         out << ", nb::object: ";
-    //         if (const nb::object pyimg = nb::find(img);
-    //         pyimg.is_valid()) {
-    //             out << pyimg.ptr();
-    //         }
-    //         else {
-    //             out << "none";
-    //         }
-    // #endif
     out << ", w×h×d×s=" << img.width() << "×" << img.height() << "×"
         << img.depth() << "×" << img.spectrum() << ">";
     return out.str();
