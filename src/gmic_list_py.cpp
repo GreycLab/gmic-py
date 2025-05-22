@@ -121,7 +121,7 @@ class gmic_list_py : public gmic_list_base<T> {
     ~gmic_list_py() override
     {
         LOG_DEBUG("Size: " << size() << ", data at: " << list()._data << endl);
-    };
+    }
 
     CImgList<T> &list() { return Base::list; }
 
@@ -209,12 +209,12 @@ using gmic_charlist_py = gmic_list_py<char>;
 class interpreter_py {
     using T = gmic_pixel_type;
 
-    static gmic_list_py<T> *run(gmic &gmic, const char *cmd,
-                                gmic_list_py<T> *img_list,
-                                gmic_charlist_py *img_names)
+    static gmic_list_py<> *run(gmic &gmic, const char *cmd,
+                               gmic_list_py<> *img_list,
+                               gmic_charlist_py *img_names)
     {
         if (img_list == nullptr)
-            img_list = new gmic_list_py<T>();
+            img_list = new gmic_list_py();
 
         gmic_charlist_py _names, *names = &_names;
 

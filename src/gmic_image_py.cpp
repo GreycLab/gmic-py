@@ -1,6 +1,7 @@
 #include <utility>
 
 #include "gmicpy.hpp"
+#include "nb_ndarray_buffer.hpp"
 #include "utils.hpp"
 
 namespace gmicpy {
@@ -26,7 +27,7 @@ constexpr auto DLPACK_DEVICE_INTERFACE = "__dlpack_device__";
 class gmic_image_py {
    public:
     using T = gmic_pixel_type;
-    using Img = CImg<T>;
+    using Img = CImg<>;
     /// ndarray of type T on the CPU
     template <class... P>
     using TNDArray = nb::ndarray<T, nb::device::cpu, P...>;
@@ -150,15 +151,16 @@ class gmic_image_py {
         return img;
     }
 
-    template <class Tp = T, class... P>
-    static auto as_ndarray(Img &img)
+    template <class Tp = T, class Handle = nb::handle, class... P>
+    static auto as_ndarray(const Handle &imgh)
     {
-        if (img.data() == nullptr)
-            throw runtime_error("Invalid access: Image has no data");
-        auto shape_v = shape<size_t, array<size_t, 4>>(img);
-        auto strides_v = strides<int64_t, false, array<int64_t, 4>>(img);
+        auto &img = nb::cast<Img &>(imgh);
+        LOG_SIG(Trace, as_ndarray, ARGS(Tp, P...), img_to_string(img) << endl);
+        check_has_data(img);
+        auto shape_v = shape<size_t>(img);
+        auto strides_v = strides<int64_t, false>(img);
         return TNDArray<Tp, nb::ndim<4>, P...>(img.data(), 4, shape_v.data(),
-                                               nb::handle(), strides_v.data());
+                                               imgh, strides_v.data());
     }
 
     static auto dlpack_device(Img &)
@@ -166,31 +168,25 @@ class gmic_image_py {
         return nb::make_tuple(nb::device::cpu::value, 0);
     }
 
-    static auto dlpack(Img &img)
-    {
-        LOG_TRACE(img_to_string(img) << endl);
-        return as_ndarray<>(img);
-    }
+    static auto dlpack(nb::handle_t<Img> &img) { return as_ndarray<>(img); }
 
     static nb::object array_interface(Img &img)
     {
         LOG_TRACE(img_to_string(img) << endl);
-        if (img.data() == nullptr)
-            throw runtime_error("Invalid access: Image has no data");
+        check_has_data(img);
         nb::dict ai{};
         ai["typestr"] = get_typestr<T>().data();
         ai["data"] =
             nb::make_tuple(reinterpret_cast<uintptr_t>(img.data()), false);
-        ai["shape"] = shape<size_t>(img);
-        ai["strides"] = strides<size_t, true>(img);
+        ai["shape"] = tuple_cat(shape<size_t>(img));
+        ai["strides"] = tuple_cat(strides<size_t, true>(img));
         ai["version"] = 3;
         return ai;
     }
 
     /// Returns the strides of the image, in xyzc order
-    template <integral I = size_t, bool bytes = false,
-              class container = tuple<I, I, I, I>>
-    static container strides(const Img &img)
+    template <integral I = size_t, bool bytes = false>
+    static array<I, 4> strides(const Img &img)
     {
         constexpr I S = bytes ? static_cast<I>(sizeof(T)) : 1;
         return {S, S * img.width(), S * img.width() * img.height(),
@@ -198,8 +194,8 @@ class gmic_image_py {
     }
 
     /// Returns the shape of the image, in xyzc order
-    template <integral I = size_t, class container = tuple<I, I, I, I>>
-    static container shape(const Img &img)
+    template <integral I = size_t>
+    static array<I, 4> shape(const Img &img)
     {
         return {static_cast<I>(img.width()), static_cast<I>(img.height()),
                 static_cast<I>(img.depth()), static_cast<I>(img.spectrum())};
@@ -240,6 +236,12 @@ class gmic_image_py {
         return static_cast<unsigned int>(val);
     }
 
+    static void check_has_data(const Img &img)
+    {
+        if (img.data() == nullptr)
+            throw runtime_error("Image has no data");
+    }
+
     static constexpr auto get_pydoc =
         "Returns the value at the given coordinate. Takes between 2 and 4 "
         "arguments depending on image dimensions :\n"
@@ -251,6 +253,7 @@ class gmic_image_py {
         "Raises a ValueError if condition is not met";
     static T get(Img &img, const nb::tuple &args)
     {
+        check_has_data(img);
         unsigned int x = cast_coord(args[0], img.width(), "X"),
                      y = cast_coord(args[1], img.height(), "Y"), z = 0, c = 0;
         switch (args.size()) {
@@ -290,6 +293,7 @@ class gmic_image_py {
     static nb::tuple pixel_at(Img &img, const long xi, const long yi,
                               const optional<long> zi)
     {
+        check_has_data(img);
         unsigned int x = cast_long(xi, img.width(), "X"),
                      y = cast_long(yi, img.height(), "Y"), z = 0;
         if (zi)
@@ -307,6 +311,36 @@ class gmic_image_py {
                              [&](unsigned int i) { return img(x, y, z, i); });
     }
 
+    static int get_buffer(PyObject *exporter, Py_buffer *view,
+                          const int flags) noexcept
+    {
+        const auto handle = nb::handle(exporter);
+        try {
+            auto ndarr =
+                as_ndarray<T, nb::handle, nb::no_framework, nb::f_contig>(
+                    handle);
+            LOG_DEBUG("Buffer request with flags = " << flags);
+            auto ret_val = nd_ndarray_tpbuffer(ndarr, handle, view, flags);
+            LOG << ", return code = " << ret_val;
+            if (const auto ex = nb::handle(PyErr_GetRaisedException()); ex) {
+                const auto ex_str = nb::repr(ex);
+                LOG << ", raised exception: " << ex_str.c_str();
+                PyErr_SetRaisedException(ex.ptr());
+            }
+            LOG << endl;
+            return ret_val;
+        }
+        catch (nb::cast_error &) {
+            PyErr_SetString(PyExc_BufferError,
+                            "Object is not a valid G'MIC Image");
+        }
+        catch (exception &ex) {
+            PyErr_SetString(PyExc_BufferError, ex.what());
+        }
+        view->obj = nullptr;
+        return -1;
+    }
+
     template <class... Args>
     using assign_t = Img &(*)(Img &, Args...);
     template <class... Args>
@@ -315,9 +349,18 @@ class gmic_image_py {
     static auto bind(const nb::module_ &m)
     {
         LOG_DEBUG("Binding gmic.Image class" << endl);
+
+        PyType_Slot slots[] = {
+            {Py_bf_getbuffer,
+             reinterpret_cast<void *>(static_cast<getbufferproc>(get_buffer))},
+            {Py_bf_releasebuffer,
+             reinterpret_cast<void *>(
+                 static_cast<releasebufferproc>(nb_ndarray_releasebuffer))},
+            {0, nullptr}};
+
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
         auto cls =
-            nb::class_<Img>(m, CLASSNAME, "G'MIC Image")
+            nb::class_<Img>(m, CLASSNAME, "G'MIC Image", nb::type_slots(slots))
                 .def(DLPACK_INTERFACE, &gmic_image_py::dlpack,
                      nb::rv_policy::reference_internal)
                 .def(DLPACK_DEVICE_INTERFACE, &gmic_image_py::dlpack_device)
@@ -342,11 +385,13 @@ class gmic_image_py {
                 .def("at", &pixel_at, pixel_at_doc, "x"_a, "y"_a,
                      "z"_a = nb::none())
                 .def_prop_ro(
-                    "shape", &shape<>,
+                    "shape",
+                    [](const Img &img) { return tuple_cat(shape<>(img)); },
                     "Returns the shape (size along each axis) tuple of the "
                     "image in xyzc order")
                 .def_prop_ro(
-                    "strides", &strides<>,
+                    "strides",
+                    [](const Img &img) { return tuple_cat(strides<>(img)); },
                     "Returns the stride tuple (step size along each axis) "
                     "of the image in xyzc order")
                 .def_prop_ro("width", &Img::width,
@@ -387,14 +432,14 @@ class gmic_image_py {
                 .def(nb::self /= int(), nb::rv_policy::none)
                 .def(nb::self /= float(), nb::rv_policy::none);
 
-        cls.def("fill",
-                static_cast<Img &(Img::*)(const char *, bool, bool,
-                                          CImgList<T> *)>(&Img::fill),
-                "Fills the image with the given value string. Like "
-                "assign_dims_valstr with the image's current dimensions",
-                "expression"_a, "repeat_values"_a = true,
-                "allow_formula"_a = true, "list_images"_a.none() = nullptr,
-                nb::rv_policy::none);
+        cls.def(
+            "fill",
+            static_cast<Img &(Img::*)(const char *, bool, bool, CImgList<> *)>(
+                &Img::fill),
+            "Fills the image with the given value string. Like "
+            "assign_dims_valstr with the image's current dimensions",
+            "expression"_a, "repeat_values"_a = true, "allow_formula"_a = true,
+            "list_images"_a.none() = nullptr, nb::rv_policy::none);
         // ReSharper restore CppIdenticalOperandsInBinaryExpression
 
         // Bindings for CImg constructors and assign()'s
@@ -408,7 +453,10 @@ class gmic_image_py {
              nb::rv_policy::none, ##__VA_ARGS__)
         char doc_buf[1024];
 
-        IMAGE_ASSIGN("assign_empty", "Construct an empty image", ARGS());
+        IMAGE_ASSIGN("assign_empty",
+                     "Construct an empty image. Beware that any attempt at "
+                     "reading the image will raise a RuntimeError",
+                     ARGS());
 
         IMAGE_ASSIGN("assign_copy", "Copy or proxy existing image",
                      ARGS(Img &, bool), "other"_a, "is_shared"_a = false);
@@ -503,10 +551,13 @@ class yxc_wrapper {
     static constexpr array<size_t, 3> GMIC_TO_YXC = {1, 0, 3};
     static constexpr array<size_t, 4> YXC_TO_GMIC = {1, 0, DIM_NONE, 2};
 
+    void check_has_data() const { ImgPy::check_has_data(img); }
+
     template <bool rtrn = true>
     [[nodiscard]] conditional_t<rtrn, size_t, void> effective_z()
         const  // NOLINT(*-use-nodiscard)
     {
+        check_has_data();
         if (!z && img.depth() != 1) {
             throw runtime_error(
                 "Must set Z before using wrapper unless image depth is 1");
@@ -529,8 +580,8 @@ class yxc_wrapper {
     CNDArray<3, T, P...> reshape_to_yxc()
     {
         const auto ez = effective_z();
-        auto shape_v = shape_yxc<size_t, false>();
-        auto strides_v = strides_yxc<int64_t, false>(img);
+        auto shape_v = shape_yxc<size_t>();
+        auto strides_v = strides_yxc<int64_t>(img);
         return {&img(0, 0, ez, 0), 3, shape_v.data(),
                 cast(img, nb::rv_policy::none), strides_v.data()};
     }
@@ -647,6 +698,7 @@ class yxc_wrapper {
                 if (!nz)
                     try {
                         nz = static_cast<size_t>(nb::cast<nb::int_>(a, false));
+                        check_has_data();
                         if (z)
                             throw runtime_error("Depth is already set");
                         if (nz >= img.depth())
@@ -730,26 +782,18 @@ class yxc_wrapper {
     }
 
     /// Returns the strides of the image, in yxc order
-    template <integral I = size_t, bool tuple = true, bool bytes = false>
-    static auto strides_yxc(const Img &img)
-        -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
+    template <integral I = size_t, bool bytes = false>
+    static std::array<I, 3> strides_yxc(const Img &img)
     {
-        auto istrides = ImgPy::strides<
-            I, bytes,
-            conditional_t<tuple, std::tuple<I, I, I, I>, std::array<I, 4>>>(
-            img);
+        auto istrides = ImgPy::strides<I, bytes>(img);
         return dims_to_xyc<I>(istrides);
     }
 
     /// Returns the shape of the image, in yxc order
-    template <integral I = size_t, bool tuple = true>
-    auto shape_yxc()
-        -> conditional_t<tuple, std::tuple<I, I, I>, std::array<I, 3>>
+    template <integral I = size_t>
+    [[nodiscard]] std::array<I, 3> shape_yxc() const
     {
-        effective_z<false>();
-        auto ishape = ImgPy::shape<
-            I, conditional_t<tuple, std::tuple<I, I, I, I>, std::array<I, 4>>>(
-            img);
+        auto ishape = ImgPy::shape<I>(img);
         return dims_to_xyc<I>(ishape);
     }
 
@@ -828,7 +872,7 @@ class yxc_wrapper {
         const Ti *src = arr.data();
         const auto istrides = arr.stride_ptr();
         const auto ishape = arr.shape_ptr();
-        const auto ostrides = strides_yxc<int64_t, false>(img);
+        const auto ostrides = strides_yxc<int64_t>(img);
 
         copy_ndarray_data<3, Ti, T>(src, istrides, ishape, &img(0, 0, z, 0),
                                     ostrides.data(), cast_pol);
@@ -997,7 +1041,10 @@ class yxc_wrapper {
                     "Returns the image data converted to the wrapper dtype as "
                     "a bytes object")
                 .def_prop_ro(
-                    "shape", &yxc_wrapper::shape_yxc<size_t, true>,
+                    "shape",
+                    [](const yxc_wrapper &wrp) {
+                        return tuple_cat(wrp.shape_yxc());
+                    },
                     "Returns the shape (size along each axis) tuple of the "
                     "image in xyzc order");
         cls.def("assign", &yxc_wrapper::assign,

@@ -70,7 +70,7 @@ find_package(nanobind CONFIG REQUIRED)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gmic)
 
 # Add the module to compile
-list(APPEND NANOBIND_MODULE_FILES "src/gmicpy.cpp" "src/gmic_image_py.cpp" "src/gmic_list_py.cpp")
+list(APPEND NANOBIND_MODULE_FILES "src/gmicpy.cpp" "src/gmic_image_py.cpp" "src/gmic_list_py.cpp" "src/nb_ndarray_buffer.cpp")
 
 if (SKBUILD_SABI_COMPONENT)
     nanobind_add_module(gmic-py STABLE_ABI ${NANOBIND_MODULE_FILES})

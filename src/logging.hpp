@@ -1,6 +1,9 @@
 #ifndef LOGGING_H
 #define LOGGING_H
+#include <array>
+#include <cstring>
 #include <ostream>
+#include <source_location>
 
 namespace gmicpy {
 
@@ -124,7 +127,7 @@ class function_name_stripped {
         return std::to_array(name);
     }
 
-    constexpr const char *str() const { return name.data(); }
+    [[nodiscard]] constexpr const char *str() const { return name.data(); }
 };
 
 using Level = DebugLogger::Level;
