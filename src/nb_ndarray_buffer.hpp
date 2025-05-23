@@ -6,26 +6,26 @@
 
 namespace gmicpy {
 
-int nd_ndarray_tpbuffer(nanobind::ndarray<nanobind::ro> array, bool ro,
-                        const nanobind::handle &exporter, Py_buffer *view,
-                        int flags) noexcept;
+int ndarray_tpbuffer(const nanobind::ndarray<nanobind::ro> &array, bool ro,
+                     const nanobind::handle &exporter, Py_buffer *view,
+                     int flags) noexcept;
 
 void nb_ndarray_releasebuffer(PyObject *, Py_buffer *view);
 
-constexpr const char *get_pybuf_format(nanobind::dlpack::dtype type)
+constexpr const char *ndarray_get_pybuf_format(nanobind::dlpack::dtype type)
 {
     return nullptr;
 }
 
-constexpr bool fill_pybuf_view(const int device_type,
-                               const nanobind::dlpack::dtype type,
-                               Py_buffer *view) noexcept(false)
+constexpr bool ndarray_fill_pybuf_view(const int device_type,
+                                       const nanobind::dlpack::dtype type,
+                                       Py_buffer *view) noexcept(false)
 {
     using namespace nanobind;
     if (device_type != device::cpu::value) {
         throw buffer_error(
-            "Only CPU-allocated ndarrays can be "
-            "accessed via the buffer protocol!");
+            "Only CPU-allocated ndarrays can be accessed via the buffer "
+            "protocol!");
     }
 
     const char *format = nullptr;
@@ -107,7 +107,9 @@ constexpr bool fill_pybuf_view(const int device_type,
             break;
     }
 
-    if (!format || type.lanes != 1) {
+    // Allow void (bits = 0) if we're only static checking (view is null)
+    if (((type.bits || view) && !format) ||
+        (type.lanes != 1 && (view || type.bits != 0))) {
         throw buffer_error(
             "Don't know how to convert DLPack dtype into buffer "
             "protocol format!");
@@ -119,19 +121,24 @@ constexpr bool fill_pybuf_view(const int device_type,
     return true;
 }
 
+template <int device_type, nanobind::dlpack::dtype type>
+constexpr bool ndarray_fill_pybuf_view() noexcept(false)
+{
+    static_assert(ndarray_fill_pybuf_view(device_type, type, nullptr));
+    return true;
+}
+
 template <class... Args>
-int gmicpy::nd_ndarray_tpbuffer(nanobind::ndarray<Args...> array,
-                                const nanobind::handle &exporter,
-                                Py_buffer *view, const int flags) noexcept
+int ndarray_tpbuffer(const nanobind::ndarray<Args...> &array,
+                     const nanobind::handle &exporter, Py_buffer *view,
+                     const int flags) noexcept
 {
     using namespace nanobind;
-    static_assert(
-        fill_pybuf_view(ndarray<Args...>::DeviceType,
-                        nanobind::dtype<typename ndarray<Args...>::Scalar>(),
-                        nullptr),
-        "Can't export given type to Python buffer format");
-    return nd_ndarray_tpbuffer(ndarray<ro>(array), ndarray<Args...>::ReadOnly,
-                               exporter, view, flags);
+    ndarray_fill_pybuf_view<
+        ndarray<Args...>::DeviceType,
+        nanobind::dtype<typename ndarray<Args...>::Scalar>()>();
+    return ndarray_tpbuffer(ndarray<ro>(array), ndarray<Args...>::ReadOnly,
+                            exporter, view, flags);
 }
 
 }  // namespace gmicpy

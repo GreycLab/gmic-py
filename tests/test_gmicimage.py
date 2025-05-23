@@ -74,17 +74,27 @@ def test_array_interface(npdata: np.ndarray, img: gmic.Image):
     assert isinstance(img.__array_interface__, dict)
     assert "__array_interface__" in dir(img)
     mask = AttrMask(img, "__array_interface__")
-    arr = np.array(mask)
+    arr = np.asarray(mask, copy=True)
     assert_array_equal(npdata, arr)
+    arr *= 0
+    assert_array_equal(npdata, mask)
+    arr = np.asarray(mask, copy=False)
+    assert_array_equal(npdata, arr)
+    arr *= 0
+    assert_array_equal(img, np.zeros_like(arr))
 
 
 def test_dlpack_interface(npdata: np.ndarray, img: gmic.Image):
     assert "__dlpack__" in dir(img)
     assert "__dlpack_device__" in dir(img)
-    assert type(img.__dlpack__()).__name__ == "PyCapsule"
+    assert type(img.__dlpack__(dl_device=(1, 0))).__name__ == "PyCapsule"
     # noinspection PyTypeChecker
-    arr = np.from_dlpack(img)
+    arr = np.from_dlpack(img, copy=False)
     assert_array_equal(npdata, arr)
+    with pytest.raises(ValueError):
+        img.__dlpack__(dl_device=(2, 3))
+    with pytest.raises(ValueError):
+        img.__dlpack__(stream=1)
 
 
 def test_at_pixel(img: gmic.Image, img2d: gmic.Image):
@@ -118,7 +128,7 @@ def test_operators(npdata: np.ndarray):
     assert img.__array_interface__['data'][0] != img2.__array_interface__['data'][0], \
         "Cloned image data should not be at the same location"
     assert np.any(npdata != npdata2)
-    assert np.any(img != img2), "Image should be different"
+    assert img != img2, "Image should be different"
 
     imgorig = +img
     imgorig2 = +img2

@@ -151,16 +151,16 @@ class gmic_image_py {
         return img;
     }
 
-    template <class Tp = T, class Handle = nb::handle, class... P>
-    static auto as_ndarray(const Handle &imgh)
+    template <class... P>
+    static auto as_ndarray(const nb::handle &imgh)
     {
         auto &img = nb::cast<Img &>(imgh);
-        LOG_SIG(Trace, as_ndarray, ARGS(Tp, P...), img_to_string(img) << endl);
+        LOG_SIG(Trace, as_ndarray, ARGS(T, P...), img_to_string(img) << endl);
         check_has_data(img);
         auto shape_v = shape<size_t>(img);
         auto strides_v = strides<int64_t, false>(img);
-        return TNDArray<Tp, nb::ndim<4>, P...>(img.data(), 4, shape_v.data(),
-                                               imgh, strides_v.data());
+        return TNDArray<T, nb::ndim<4>, P...>(img.data(), 4, shape_v.data(),
+                                              imgh, strides_v.data());
     }
 
     static auto dlpack_device(Img &)
@@ -168,7 +168,22 @@ class gmic_image_py {
         return nb::make_tuple(nb::device::cpu::value, 0);
     }
 
-    static auto dlpack(nb::handle_t<Img> &img) { return as_ndarray<>(img); }
+    static auto dlpack(
+        const nb::handle_t<Img> &img, optional<nb::handle> stream,
+        optional<nb::tuple> /* max_version, accepted but ignored*/,
+        optional<nb::tuple> dl_device, optional<bool> copy)
+    {
+        if (stream)
+            throw nb::value_error("Unsupported __dlpack__ argument: stream");
+        if (dl_device &&
+            dl_device->not_equal(nb::make_tuple(nb::device::cpu::value, 0)))
+            throw nb::value_error(
+                "Unsupported __dlpack__ dl_device, only CPU is supported");
+
+        auto array = as_ndarray<>(img);
+        return !copy || !*copy ? array.cast(nb::rv_policy::reference)
+                               : array.cast(nb::rv_policy::copy);
+    }
 
     static nb::object array_interface(Img &img)
     {
@@ -314,13 +329,11 @@ class gmic_image_py {
     static int get_buffer(PyObject *exporter, Py_buffer *view,
                           const int flags) noexcept
     {
+        LOG_DEBUG();
         const auto handle = nb::handle(exporter);
         try {
-            auto ndarr =
-                as_ndarray<T, nb::handle, nb::no_framework, nb::f_contig>(
-                    handle);
-            LOG_DEBUG("Buffer request with flags = " << flags);
-            auto ret_val = nd_ndarray_tpbuffer(ndarr, handle, view, flags);
+            const auto ndarr = as_ndarray<T>(handle);
+            auto ret_val = ndarray_tpbuffer(ndarr, handle, view, flags);
             LOG << ", return code = " << ret_val;
             if (const auto ex = nb::handle(PyErr_GetRaisedException()); ex) {
                 const auto ex_str = nb::repr(ex);
@@ -361,19 +374,17 @@ class gmic_image_py {
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
         auto cls =
             nb::class_<Img>(m, CLASSNAME, "G'MIC Image", nb::type_slots(slots))
-                .def(DLPACK_INTERFACE, &gmic_image_py::dlpack,
-                     nb::rv_policy::reference_internal)
+                .def(DLPACK_INTERFACE, &gmic_image_py::dlpack, nb::kw_only(),
+                     "stream"_a = nb::none(), "max_version"_a = nb::none(),
+                     "dl_device"_a = nb::none(), "copy"_a = nb::none(),
+                     nb::sig("def __dlpack__(self, *, "
+                             "stream: int | Any | None = None, "
+                             "max_version: tuple[int, int] | None = None, "
+                             "dl_device: tuple[Enum, int] | None = None, "
+                             "copy: bool | None = None) → PyCapsule"))
                 .def(DLPACK_DEVICE_INTERFACE, &gmic_image_py::dlpack_device)
                 .def_prop_ro(ARRAY_INTERFACE, &gmic_image_py::array_interface,
                              nb::rv_policy::reference_internal)
-                .def("as_dlpack", &gmic_image_py::as_ndarray<>,
-                     nb::rv_policy::reference_internal,
-                     "Returns a view of the underlying data as a"
-                     " DLPack capsule")
-                .def("to_dlpack", &gmic_image_py::as_ndarray<>,
-                     nb::rv_policy::copy,
-                     "Returns a copy of the underlying data as a"
-                     " DLPack capsule")
                 .def("as_numpy", &gmic_image_py::as_ndarray<nb::numpy>,
                      nb::rv_policy::reference_internal,
                      "Returns a writable view of the underlying data as a "
@@ -540,12 +551,12 @@ class yxc_wrapper {
 
     nb::object img_obj;  // To keep the source image from being freed
     Img &img;
-    optional<size_t> z;
     optional<NDArray<3, nb::ro>> data = {};
-    optional<nb::object> data_handle = {};
+    optional<nb::object> data_obj = {};
     optional<nb::object> bytes = {};
-    cast_policy cast_pol;
-    data_caster caster;
+    const optional<size_t> z;
+    const cast_policy cast_pol;
+    const data_caster caster;
 
     static constexpr size_t DIM_NONE = 255;
     static constexpr array<size_t, 3> GMIC_TO_YXC = {1, 0, 3};
@@ -593,10 +604,10 @@ class yxc_wrapper {
             data = caster.cast_to(ndarray, cast_pol);
             LOG_TRACE("Allocated YXC data buffer at "
                       << &data << " (data at " << data->data() << ')' << endl);
-            data_handle = data->cast(nb::rv_policy::take_ownership);
+            data_obj = data->cast(nb::rv_policy::take_ownership);
         }
-        else if (!data_handle->is_valid())
-            throw runtime_error("");
+        else if (!data_obj->is_valid())
+            throw runtime_error("Error allocating data array");
         return *data;
     }
 
@@ -605,7 +616,7 @@ class yxc_wrapper {
         if (!bytes) {
             auto dat = get_data();
             bytes = cast(nb::bytes(dat.data(), dat.size() * dat.itemsize()),
-                         nanobind::rv_policy::reference_internal, dat.cast());
+                         nanobind::rv_policy::reference_internal, *data_obj);
         }
         return *bytes;
     }
@@ -643,19 +654,27 @@ class yxc_wrapper {
 
    public:
     explicit yxc_wrapper(const nb::object &img_obj, const optional<size_t> z,
-                         data_caster caster, const cast_policy cast_pol)
-        : img_obj(img_obj),
-          img(nb::cast<Img &>(img_obj, false)),
-          z(z),
-          cast_pol(cast_pol),
-          caster(std::move(caster))
+                         const data_caster &caster, const cast_policy cast_pol)
+        : yxc_wrapper(nb::cast<Img &>(img_obj, false), z, caster, cast_pol)
     {
+        this->img_obj = img_obj;
     }
 
     explicit yxc_wrapper(Img &img, const optional<size_t> z,
-                         data_caster caster, const cast_policy cast_pol)
-        : img(img), z(z), cast_pol(cast_pol), caster(std::move(caster))
+                         const data_caster &caster, const cast_policy cast_pol)
+        : img(img), z(z), cast_pol(cast_pol), caster(caster)
     {
+        LOG_TRACE("image: " << img_to_string(img) << endl);
+    }
+
+    ~yxc_wrapper()
+    {
+        LOG_TRACE("image: " << img_to_string(img) << ", data: ")
+        if (data)
+            LOG << " array " << &*data << " with data at " << data->data()
+                << endl;
+        else
+            LOG << "nil" << endl;
     }
 
     /// Creates a temporary wrapper meant to perform a one-time conversion and
@@ -979,6 +998,35 @@ class yxc_wrapper {
         return out.str();
     }
 
+    static int get_buffer(PyObject *exporter, Py_buffer *view,
+                          const int flags) noexcept
+    {
+        LOG_DEBUG();
+        const auto handle = nb::handle(exporter);
+        try {
+            auto &wrp = nb::cast<yxc_wrapper &>(handle);
+            const auto &ndarr = wrp.get_data();
+            auto ret_val = ndarray_tpbuffer(ndarr, handle, view, flags);
+            LOG << ", return code = " << ret_val;
+            if (const auto ex = nb::handle(PyErr_GetRaisedException()); ex) {
+                const auto ex_str = nb::repr(ex);
+                LOG << ", raised exception: " << ex_str.c_str();
+                PyErr_SetRaisedException(ex.ptr());
+            }
+            LOG << endl;
+            return ret_val;
+        }
+        catch (nb::cast_error &) {
+            PyErr_SetString(PyExc_BufferError,
+                            "Object is not a valid G'MIC Image");
+        }
+        catch (exception &ex) {
+            PyErr_SetString(PyExc_BufferError, ex.what());
+        }
+        view->obj = nullptr;
+        return -1;
+    }
+
     static void bind(nb::class_<Img> &imgcls)
     {
         LOG_DEBUG("Binding gmic.Image.YXCWrapper class" << endl);
@@ -1000,13 +1048,22 @@ class yxc_wrapper {
                     "values (see C++ rules for Floating-integral conversion).")
                 .export_values();
 
+        PyType_Slot slots[] = {
+            {Py_bf_getbuffer,
+             reinterpret_cast<void *>(static_cast<getbufferproc>(get_buffer))},
+            {Py_bf_releasebuffer,
+             reinterpret_cast<void *>(
+                 static_cast<releasebufferproc>(nb_ndarray_releasebuffer))},
+            {0, nullptr}};
+
         auto cls =
             nb::class_<yxc_wrapper>(
                 imgcls, CLASSNAME,
                 ssnprintf(doc,
                           "Wrapper around a gmic.%s to exchange with "
                           "libraries using YXC axe order",
-                          ImgPy::CLASSNAME))
+                          ImgPy::CLASSNAME),
+                nb::type_slots(slots))
                 .def_prop_ro_static(
                     "dtypes", [](nb::handle) { return get_casters_strs(); })
                 .def_prop_ro("image",

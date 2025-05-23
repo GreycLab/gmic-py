@@ -173,9 +173,10 @@ static nb::ndarray<To, nb::device::cpu, nb::ndim<ndim>, P...> copy_ndarray(
 {
     const Ti *src = array.data();
     To *dest = new To[array.size()];
-    LOG_TRACE("Allocating " << static_cast<void *>(dest) << endl);
+    LOG_TRACE("Allocating ndarray data at " << static_cast<void *>(dest)
+                                            << endl);
     nb::capsule owner(dest, deleter ? [](void *p) noexcept {
-        LOG_TRACE("Releasing " << p << endl);
+        LOG << Level::Trace << "Releasing ndarray data at " << p << endl;
         delete[] static_cast<float *>(p);
     } : [](void *) noexcept {});
     size_t shape[ndim];
