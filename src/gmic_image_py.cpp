@@ -334,13 +334,7 @@ class gmic_image_py {
         try {
             const auto ndarr = as_ndarray<T>(handle);
             auto ret_val = ndarray_tpbuffer(ndarr, handle, view, flags);
-            LOG << ", return code = " << ret_val;
-            if (const auto ex = nb::handle(PyErr_GetRaisedException()); ex) {
-                const auto ex_str = nb::repr(ex);
-                LOG << ", raised exception: " << ex_str.c_str();
-                PyErr_SetRaisedException(ex.ptr());
-            }
-            LOG << endl;
+            LOG << ", return code = " << ret_val << endl;
             return ret_val;
         }
         catch (nb::cast_error &) {
@@ -364,11 +358,13 @@ class gmic_image_py {
         LOG_DEBUG("Binding gmic.Image class" << endl);
 
         PyType_Slot slots[] = {
+#if defined(Py_bf_getbuffer) && defined(Py_bf_releasebuffer)
             {Py_bf_getbuffer,
              reinterpret_cast<void *>(static_cast<getbufferproc>(get_buffer))},
             {Py_bf_releasebuffer,
              reinterpret_cast<void *>(
                  static_cast<releasebufferproc>(nb_ndarray_releasebuffer))},
+#endif
             {0, nullptr}};
 
         // ReSharper disable CppIdenticalOperandsInBinaryExpression
@@ -1007,13 +1003,7 @@ class yxc_wrapper {
             auto &wrp = nb::cast<yxc_wrapper &>(handle);
             const auto &ndarr = wrp.get_data();
             auto ret_val = ndarray_tpbuffer(ndarr, handle, view, flags);
-            LOG << ", return code = " << ret_val;
-            if (const auto ex = nb::handle(PyErr_GetRaisedException()); ex) {
-                const auto ex_str = nb::repr(ex);
-                LOG << ", raised exception: " << ex_str.c_str();
-                PyErr_SetRaisedException(ex.ptr());
-            }
-            LOG << endl;
+            LOG << ", return code = " << ret_val << endl;
             return ret_val;
         }
         catch (nb::cast_error &) {
@@ -1040,20 +1030,21 @@ class yxc_wrapper {
                        "OOB values will be clamped to nearest bound (default)")
                 .value("THROW", THROW,
                        "Exception will be raised if any OOB value is found")
-                .value(
-                    "NOCHECK", NOCHECK,
-                    "Disable checking for OOB values. Can increase "
-                    "performances "
-                    "at the risk of running into undefined behaviour on OOB "
-                    "values (see C++ rules for Floating-integral conversion).")
+                .value("NOCHECK", NOCHECK,
+                       "Disable checking for OOB values. Can increase "
+                       "performances at the risk of running into undefined "
+                       "behaviour on OOB values (see C++ rules for "
+                       "Floating-integral conversion).")
                 .export_values();
 
         PyType_Slot slots[] = {
+#if defined(Py_bf_getbuffer) && defined(Py_bf_releasebuffer)
             {Py_bf_getbuffer,
              reinterpret_cast<void *>(static_cast<getbufferproc>(get_buffer))},
             {Py_bf_releasebuffer,
              reinterpret_cast<void *>(
                  static_cast<releasebufferproc>(nb_ndarray_releasebuffer))},
+#endif
             {0, nullptr}};
 
         auto cls =

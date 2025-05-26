@@ -1,9 +1,12 @@
+from importlib.metadata import version
 from typing import Any, List
 
 import gmic
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
+
+NPVER = [int(p) for p in version('numpy').split('.')]
 
 
 class AttrMask:
@@ -74,11 +77,14 @@ def test_array_interface(npdata: np.ndarray, img: gmic.Image):
     assert isinstance(img.__array_interface__, dict)
     assert "__array_interface__" in dir(img)
     mask = AttrMask(img, "__array_interface__")
-    arr = np.asarray(mask, copy=True)
-    assert_array_equal(npdata, arr)
-    arr *= 0
-    assert_array_equal(npdata, mask)
-    arr = np.asarray(mask, copy=False)
+    if NPVER[0] >= 2:
+        arr = np.asarray(mask, copy=True)
+        assert_array_equal(npdata, arr)
+        arr *= 0
+        assert_array_equal(npdata, mask)
+        arr = np.asarray(mask, copy=False)
+    else:
+        arr = np.asarray(mask)
     assert_array_equal(npdata, arr)
     arr *= 0
     assert_array_equal(img, np.zeros_like(arr))
@@ -89,7 +95,10 @@ def test_dlpack_interface(npdata: np.ndarray, img: gmic.Image):
     assert "__dlpack_device__" in dir(img)
     assert type(img.__dlpack__(dl_device=(1, 0))).__name__ == "PyCapsule"
     # noinspection PyTypeChecker
-    arr = np.from_dlpack(img, copy=False)
+    if NPVER[0] >= 2 and NPVER[1] >= 1:
+        arr = np.from_dlpack(img, copy=False)
+    else:
+        arr = np.from_dlpack(img)
     assert_array_equal(npdata, arr)
     with pytest.raises(ValueError):
         img.__dlpack__(dl_device=(2, 3))
