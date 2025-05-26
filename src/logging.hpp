@@ -1,6 +1,10 @@
 #ifndef LOGGING_H
 #define LOGGING_H
+#include <algorithm>
+#include <array>
+#include <cstring>
 #include <ostream>
+#include <source_location>
 
 namespace gmicpy {
 
@@ -70,8 +74,8 @@ class function_name_stripped {
         {"cimg_library::", ""},
         {"std::", ""},
         {"nanobind::", "nb::"},
-        {"gmic_image_py<T>::Img", "CImg"},
-        {"gmic_image_py<T>", "Image"},
+        {"gmic_image_py::Img", "CImg"},
+        {"gmic_image_py", "Image"},
         {"gmic_list_py<T>", "ImageList"},
         {"gmic_list_py<char>", "CharList"},
         {"gmic_list_base<T>", "ImageList"},
@@ -124,9 +128,24 @@ class function_name_stripped {
         return std::to_array(name);
     }
 
-    constexpr const char *str() const { return name.data(); }
+    [[nodiscard]] constexpr const char *str() const { return name.data(); }
 };
 
+using Level = DebugLogger::Level;
+extern DebugLogger LOG;
+#define LOG_VA_ELSE(arg, ...) arg
+#define LOG_(level, ...)                                                    \
+    {                                                                       \
+        static constexpr function_name_stripped<strlen(                     \
+            source_location::current().function_name())>                    \
+            fname(source_location::current().function_name());              \
+        LOG << level                                                        \
+            << fname.str() LOG_VA_ELSE(__VA_OPT__(<< ": " << __VA_ARGS__, ) \
+                                       << std::endl);                       \
+    }
+#define LOG_INFO(...) LOG_(Level::Info __VA_OPT__(, __VA_ARGS__))
+#define LOG_DEBUG(...) LOG_(Level::Debug __VA_OPT__(, __VA_ARGS__))
+#define LOG_TRACE(...) LOG_(Level::Trace __VA_OPT__(, __VA_ARGS__))
 }  // namespace gmicpy
 
 #endif  // LOGGING_H

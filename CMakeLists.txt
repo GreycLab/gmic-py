@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 project(gmic-py LANGUAGES C CXX)
 
 find_package(Python 3.8
@@ -8,7 +9,7 @@ find_package(Python 3.8
 message(STATUS "Using python executable: ${Python_EXECUTABLE}")
 set(IGNORE_UNUSED "${Python3_EXECUTABLE}") # Silence CMake warning about this variable passed by CLion
 
-option(GMIC_LIMITED_FEATURES "Disab<les a few of gmic's optional features, to build smaller wheels" OFF)
+option(GMIC_LIMITED_FEATURES "Disables a few of gmic's optional features, to build smaller wheels" OFF)
 option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." OFF)
 option(USE_SYSTEM_CIMG_GMICPY "Use CImg from the system, otherwise the local cimg git submodule will be used. \
 Overrides gmic's CMake USE_SYSTEM_CIMG option" OFF)
@@ -69,7 +70,7 @@ find_package(nanobind CONFIG REQUIRED)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gmic)
 
 # Add the module to compile
-list(APPEND NANOBIND_MODULE_FILES "src/gmicpy.cpp" "src/gmicpy.h" "src/logging.h" "src/translate_args.h")
+list(APPEND NANOBIND_MODULE_FILES "src/gmicpy.cpp" "src/gmic_image_py.cpp" "src/gmic_list_py.cpp" "src/nb_ndarray_buffer.cpp")
 
 if (SKBUILD_SABI_COMPONENT)
     nanobind_add_module(gmic-py STABLE_ABI ${NANOBIND_MODULE_FILES})

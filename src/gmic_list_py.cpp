@@ -1,5 +1,13 @@
-// This file is a subpart of gmicpy.cpp, split for readability but part of the
-// same translation unit
+#ifndef GMIC_LIST_PY_HPP
+#define GMIC_LIST_PY_HPP
+
+#include "gmicpy.hpp"
+
+namespace gmicpy {
+namespace nb = nanobind;
+using namespace nanobind::literals;
+using namespace std;
+using namespace cimg_library;
 
 template <class T>
 class gmic_list_base {
@@ -15,7 +23,8 @@ class gmic_list_base {
     virtual ~gmic_list_base() = default;
 
    public:
-    static constexpr auto CLASSNAME = "ImageList";
+    static constexpr const char *CLASSINFO[2] = {"ImageList",
+                                                 "List of G'MIC images"};
     using Item = CImg<T> &;
 
     [[nodiscard]] Item get(unsigned int i)
@@ -54,7 +63,8 @@ class gmic_list_base<char> {
 
    public:
     using Item = string;
-    static constexpr auto CLASSNAME = "StringList";
+    static constexpr const char *CLASSINFO[2] = {"StringList",
+                                                 "List of strings"};
 
     [[nodiscard]] Item get(const unsigned int i) const
     {
@@ -95,7 +105,7 @@ class gmic_list_py : public gmic_list_base<T> {
             if (!nb::try_cast(img, imgs[i++], true))
                 throw nb::type_error(
                     "Sequence contains object(s) that isn't and cannot be "
-                    "made into a gmic Image");
+                    "made into a G'MIC Image");
         }
         if (i < N)
             throw invalid_argument(
@@ -111,7 +121,7 @@ class gmic_list_py : public gmic_list_base<T> {
     ~gmic_list_py() override
     {
         LOG_DEBUG("Size: " << size() << ", data at: " << list()._data << endl);
-    };
+    }
 
     CImgList<T> &list() { return Base::list; }
 
@@ -167,12 +177,7 @@ class gmic_list_py : public gmic_list_base<T> {
                     first = false;
                 else
                     out << ", ";
-                if constexpr (is_same_v<CImg<T> &, Item>) {
-                    out << gmic_image_py<T>::str(item);
-                }
-                else {
-                    out << item;
-                }
+                out << item;
             }
             out << ']';
         }
@@ -183,7 +188,10 @@ class gmic_list_py : public gmic_list_base<T> {
 
     static void bind(nb::module_ &m)
     {
-        nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSNAME)
+        LOG_DEBUG("Binding gmic." << gmic_list_base<T>::CLASSINFO[0]
+                                  << " class" << endl);
+        nb::class_<gmic_list_py>(m, gmic_list_base<T>::CLASSINFO[0],
+                                 gmic_list_base<T>::CLASSINFO[1])
             .def(nb::init())
             .def(nb::init_implicit<nb::sequence>())
             .def("__iter__", &gmic_list_py::iter)
@@ -197,3 +205,82 @@ class gmic_list_py : public gmic_list_base<T> {
 };
 
 using gmic_charlist_py = gmic_list_py<char>;
+
+class interpreter_py {
+    using T = gmic_pixel_type;
+
+    static gmic_list_py<> *run(gmic &gmic, const char *cmd,
+                               gmic_list_py<> *img_list,
+                               gmic_charlist_py *img_names)
+    {
+        if (img_list == nullptr)
+            img_list = new gmic_list_py();
+
+        gmic_charlist_py _names, *names = &_names;
+
+        if (img_names)
+            names = img_names;
+
+        try {
+            gmic.run(cmd, img_list->list(), names->list());
+        }
+        catch (gmic_exception &ex) {
+            cerr << ex.what();
+            if (errno)
+                cerr << ": " << strerror(errno);
+            cerr << endl;
+            throw;
+        }
+
+        return img_list;
+    }
+
+    template <class R, class... Args>
+    static auto make_static_run(R (*)(gmic &gmic, Args... args))
+        -> function<R(Args...)>
+    {
+        static unique_ptr<gmic> inter{};
+        return [&](Args... args) {
+            if (!inter)
+                inter = make_unique<gmic>();
+            return run(*inter, args...);
+        };
+    }
+
+    static string str(const gmic &inst)
+    {
+        stringstream out;
+        out << '<' << nb::type_name(nb::type<gmic>()).c_str() << " object at "
+            << &inst << '>';
+        return out.str();
+    }
+
+   public:
+    constexpr static auto CLASSNAME = "Gmic";
+
+    static void bind(nb::module_ &m)
+    {
+        LOG_DEBUG("Binding G'MIC." << CLASSNAME << " class" << endl);
+        nb::class_<gmic>(m, CLASSNAME, "G'MIC interpreter")
+            .def("run", &interpreter_py::run, "cmd"_a,
+                 "img_list"_a = nb::none(), "img_names"_a = nb::none(),
+                 nb::rv_policy::take_ownership)
+            .def("__str__", &interpreter_py::str)
+            .def(nb::init());
+
+        m.def("run", make_static_run(&interpreter_py::run), "cmd"_a,
+              "img_list"_a = nb::none(), "img_names"_a = nb::none(),
+              nb::rv_policy::take_ownership);
+    }
+};
+
+void bind_gmic_list(nanobind::module_ &m)
+{
+    gmic_list_py<>::bind(m);
+    gmic_list_py<char>::bind(m);
+    interpreter_py::bind(m);
+}
+
+}  // namespace gmicpy
+
+#endif  // GMIC_LIST_PY_HPP
