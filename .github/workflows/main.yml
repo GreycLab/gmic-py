@@ -198,7 +198,7 @@ jobs:
 
   publish-to-pypi:
     name: Publish package to PyPI
-    if: ${{ inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main') && !inputs.fake-wheels }}
+    if: ${{ (inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main')) && !inputs.fake-wheels }}
     needs:
     - build_sdist
     - build_wheels
@@ -220,7 +220,7 @@ jobs:
 
   publish-to-testpypi:
     name: Publish package to TestPyPI
-    if: ${{ !(inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main') && !inputs.fake-wheels) }}
+    if: ${{ !(inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main')) && !inputs.fake-wheels }}
     needs:
     - build_sdist
     - build_wheels
