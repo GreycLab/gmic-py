@@ -107,3 +107,17 @@ left branch, dev on the right :
 [1.2.3.dev2]     | * 567ae3f More stuff
 [1.2.3.dev1]     | * 03d0ea9 (tag: gmic-1.2.3) Updated gmic to 1.2.3
 ```
+
+## Update workflow
+
+To update the gmic version, on the dev branch or any branch other than main:
+* in lib/gmic, `git fetch && git switch -d v.3.x.x` accordingly
+* in lib/cimg, `git fetch && git switch -d v.3.x.x` to the same version as previously
+* back in the gmic-py repository
+  * `git add lib/ && git commit -m "Updated gmic to 3.x.x" &&'
+  * `git tag gmic-3.x.x`
+
+To push and release the new version on the repo:
+* `git push --tags`
+* Go to the repository's Actions tab
+* Run the "Build wheels and create release" workflow on the pushed branch, make sure that "merge to main" is checked
