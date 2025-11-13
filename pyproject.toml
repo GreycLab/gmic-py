@@ -1,5 +1,5 @@
 [project]
-name = "gmic-py"
+name = "gmic"
 description = "Python bindings for the G'MIC C++ image processing library"
 readme = "README.md"
 requires-python = ">=3.8"

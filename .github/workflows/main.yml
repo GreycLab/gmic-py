@@ -195,3 +195,49 @@ jobs:
           fi
           ls -l1 ./dist/
           gh release create --generate-notes --draft --target "$GITHUB_REF" --repo "$GITHUB_REPOSITORY" "v$GMICPY_VERSION" ./dist/*
+
+  publish-to-pypi:
+    name: Publish package to PyPI
+    if: ${{ (inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main')) && !inputs.fake-wheels }}
+    needs:
+    - build_sdist
+    - build_wheels
+    - release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/gmic
+    permissions:
+      id-token: write
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-to-testpypi:
+    name: Publish package to TestPyPI
+    if: ${{ !(inputs.merge-main == null || inputs.merge-main || github.ref == format('refs/heads/{0}', inputs.main-branch || 'main')) && !inputs.fake-wheels }}
+    needs:
+    - build_sdist
+    - build_wheels
+    - release
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/gmic
+    permissions:
+      id-token: write
+    steps:
+
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        path: dist/
+
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
